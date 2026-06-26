@@ -239,6 +239,22 @@ place for the future binwalk/EMBA branch.
 - The systemd unit grants `CAP_NET_RAW`/`CAP_NET_ADMIN` so the unprivileged
   service user can run nmap raw-socket scans.
 
+## Performance / tuning
+
+The bot itself is fast; scan time is dominated by the external tools. Defaults
+are tuned for a balance of speed and coverage on routers:
+
+- **Concurrency** — `MAX_CONCURRENT` in `.env` (default **6**) sets how many
+  targets scan in parallel. This is the main lever for TXT batch lists. Raise it
+  for more throughput (costs CPU/RAM/network); lower it on a small box.
+- **nmap** — scans ~30 router/CPE-relevant ports (`ROUTER_PORTS` in
+  `engine/stages/nmap_stage.py`, incl. MikroTik Winbox 8291, TR-069 7547, common
+  mgmt/alt-HTTP ports) instead of nmap's default 1000, with `-T4` and a
+  `--host-timeout` so dead IPs in a list return fast. Widen `ROUTER_PORTS` (or
+  add a port) if you need a service on an unusual port.
+- **Router skip** — non-routers skip nuclei/routersploit automatically, saving
+  the bulk of the time on irrelevant hosts.
+
 ## Troubleshooting
 
 - **`systemctl status` shows `200/CHDIR`** — the project lives somewhere the

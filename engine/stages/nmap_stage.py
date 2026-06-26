@@ -16,6 +16,15 @@ from ._common import ToolNotFound, run_cmd
 log = logging.getLogger(__name__)
 
 NMAP_TIMEOUT = 600.0
+# Per-host wall-clock cap so dead IPs in a batch don't burn the full timeout.
+NMAP_HOST_TIMEOUT = "120s"
+# Router/CPE-relevant TCP ports (incl. MikroTik Winbox 8291 / API 8728-8729,
+# TR-069 7547, common alt-HTTP and mgmt ports). Scanning ~30 ports instead of
+# nmap's default 1000 is the main per-target speedup.
+ROUTER_PORTS = (
+    "21,22,23,53,80,81,88,443,515,631,2000,2222,4433,5000,7547,8000,8080,8081,"
+    "8088,8291,8443,8728,8729,8888,9000,9999,10000,49152,52869"
+)
 
 # osclass "type" values we treat as router-like.
 ROUTER_TYPES = {
@@ -44,7 +53,9 @@ async def nmap_stage(target: str) -> list[Finding]:
     Tries ``-sV -O``; if OS detection needs privileges we don't have, falls back
     to ``-sV`` so port/service results still work.
     """
-    cmd = ["nmap", "-sV", "-O", "-Pn", "-oX", "-", target]
+    base = ["-sV", "-Pn", "-T4", "--host-timeout", NMAP_HOST_TIMEOUT,
+            "-p", ROUTER_PORTS, "-oX", "-", target]
+    cmd = ["nmap", "-O", *base]
     try:
         rc, stdout, stderr = await run_cmd(cmd, timeout=NMAP_TIMEOUT)
     except ToolNotFound:
@@ -53,7 +64,7 @@ async def nmap_stage(target: str) -> list[Finding]:
 
     # -O requires raw sockets; without privileges nmap quits before scanning.
     if _needs_privileges(stderr) or not stdout.strip():
-        cmd = ["nmap", "-sV", "-Pn", "-oX", "-", target]
+        cmd = ["nmap", *base]
         try:
             rc, stdout, stderr = await run_cmd(cmd, timeout=NMAP_TIMEOUT)
         except ToolNotFound:
