@@ -402,8 +402,17 @@ async def stop_batch(query: CallbackQuery, callback_data: JobCB, engine: Engine)
         show_alert=not cancelled)
 
 
+# Compact "doing now" labels for the batch aggregate view.
+_BATCH_DOING = {
+    "nmap": "сканирую порты",
+    "nuclei": "проверяю уязвимости",
+    "routersploit": "проверяю креды",
+}
+
+
 class _BatchTracker:
-    """Aggregates many jobs into one live-updating summary message."""
+    """Aggregates many jobs into one live message: progress, current targets,
+    not-router notices, and a final combined summary."""
 
     def __init__(self, message: Message, profile: ScanProfile, batch_key: int) -> None:
         self._message = message
@@ -412,11 +421,37 @@ class _BatchTracker:
         self._lock = asyncio.Lock()
         self._results: list[tuple[ScanJob, list[Finding]]] = []
         self._rejected: list[tuple[str, str]] = []
-        self._total: int | None = None  # accepted count, set on finalize
-        self.job_ids: list[int] = []     # shared with _BATCHES for stop-all
+        self._total: int | None = None   # accepted count, set on finalize
+        self.job_ids: list[int] = []      # shared with _BATCHES for stop-all
+        self._active: dict[int, str] = {}  # job_id -> current status line
+        self._device: dict[int, str] = {}  # job_id -> detected model
+
+    # ---- live per-job events -------------------------------------------------
+    async def on_progress(self, job: ScanJob, stage: str, idx: int, total: int) -> None:
+        async with self._lock:
+            self._active[job.id] = self._line(job, _BATCH_DOING.get(stage, stage) + "…")
+            await self._render()
+
+    async def on_stage_done(self, job: ScanJob, stage: str,
+                            findings: list[Finding], idx: int, total: int) -> None:
+        async with self._lock:
+            if stage == "nmap":
+                fp = next((f for f in findings if f.stage == "fingerprint"), None)
+                if fp is not None:
+                    verdict = fp.detail.get("verdict", "unknown")
+                    if verdict == "router":
+                        self._device[job.id] = (fp.detail.get("os_name")
+                                                or fp.detail.get("vendor") or "роутер")
+                    elif verdict == "not_router":
+                        self._active[job.id] = f"<code>{esc(job.target)}</code> — 🚫 не роутер, пропускаю"
+                        await self._render()
+                        return
+            await self._render()
 
     async def on_done(self, job: ScanJob, findings: list[Finding]) -> None:
         async with self._lock:
+            self._active.pop(job.id, None)
+            self._device.pop(job.id, None)
             self._results.append((job, findings))
             await self._render()
 
@@ -426,24 +461,36 @@ class _BatchTracker:
             self._rejected = rejected
             await self._render()
 
+    # ---- rendering -----------------------------------------------------------
+    def _line(self, job: ScanJob, doing: str) -> str:
+        dev = self._device.get(job.id)
+        dev_tag = f" · 🧭 {esc(dev)}" if dev else ""
+        return f"<code>{esc(job.target)}</code>{dev_tag} — {doing}"
+
     async def _render(self) -> None:
         done = len(self._results)
         complete = self._total is not None and done >= self._total
-        if not complete:
-            total = "?" if self._total is None else self._total
-            await safe_edit_message(
-                self._message,
-                f"📋 <b>Пакетный скан</b> · профиль: {PROFILE_RU.get(self._profile.value, self._profile.value)}\n"
-                f"Готово: {done}/{total}…",
-                keyboards.batch_running(self._batch_key),
-            )
-        else:
+        if complete:
             _BATCHES.pop(self._batch_key, None)
             await safe_edit_message(
                 self._message,
                 batch_summary(self._profile, self._results, self._rejected),
                 keyboards.batch_done(),
             )
+            return
+
+        total = "?" if self._total is None else self._total
+        profile_ru = PROFILE_RU.get(self._profile.value, self._profile.value)
+        lines = [
+            f"📋 <b>Пакетный скан</b> · профиль: {profile_ru}",
+            f"Готово: {done}/{total}",
+        ]
+        if self._active:
+            lines.append("▶️ Сейчас:")
+            for status in list(self._active.values())[:5]:
+                lines.append(f"  • {status}")
+        await safe_edit_message(self._message, "\n".join(lines),
+                                keyboards.batch_running(self._batch_key))
 
 
 async def _launch_batch(message: Message, targets: list[str], profile: ScanProfile,
@@ -464,6 +511,8 @@ async def _launch_batch(message: Message, targets: list[str], profile: ScanProfi
 
     for target in targets:
         job = engine.enqueue(target, profile, actor_id,
+                             on_progress=tracker.on_progress,
+                             on_stage_done=tracker.on_stage_done,
                              on_done=tracker.on_done, on_alert=alert)
         if job.status.value == "REJECTED":
             rejected.append((target, job.error or "вне scope"))

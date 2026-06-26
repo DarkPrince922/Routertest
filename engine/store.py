@@ -116,6 +116,17 @@ class Store:
                 )
             self._conn.commit()
 
+    def delete_job(self, job_id: int) -> None:
+        """Remove a job and all its findings (used when a scan is cancelled).
+
+        The audit trail is intentionally left untouched — cancellation is still
+        recorded there even though the job no longer appears in history.
+        """
+        with self._lock:
+            self._conn.execute("DELETE FROM findings WHERE job_id=?", (job_id,))
+            self._conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+            self._conn.commit()
+
     def add_findings(self, job_id: int, findings: list[Finding]) -> None:
         if not findings:
             return

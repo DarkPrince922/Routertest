@@ -189,14 +189,11 @@ class Engine:
         stages = PROFILE_STAGES.get(job.profile, [])
         total = len(stages)
 
-        # Cancelled while still queued — never start any tool.
+        # Cancelled while still queued — never start any tool, leave no history.
         if job.id in self._cancel_requested:
-            self._cancel_requested.discard(job.id)
-            self._store.add_findings(job.id, [
-                Finding("control", Severity.INFO, "Scan cancelled before start", {})])
-            self._finish(job, JobStatus.CANCELLED)
+            self._cancel_cleanup(job)
             if item.on_done is not None:
-                await _safe(item.on_done(job, self._store.get_findings(job.id)))
+                await _safe(item.on_done(job, []))
             return
 
         self._store.update_status(job.id, JobStatus.RUNNING)
@@ -242,14 +239,8 @@ class Engine:
             else:
                 final_status = JobStatus.DONE
 
-            if final_status == JobStatus.CANCELLED:
-                self._store.add_findings(job.id, [
-                    Finding("control", Severity.INFO, "Scan cancelled by user", {})])
-
         except asyncio.CancelledError:
             final_status = JobStatus.CANCELLED
-            self._store.add_findings(job.id, [
-                Finding("control", Severity.INFO, "Scan cancelled by user", {})])
             log.info("job %d cancelled mid-stage", job.id)
         except Exception as exc:  # noqa: BLE001
             self._store.update_status(job.id, JobStatus.ERROR, error=str(exc), finished=True)
@@ -263,10 +254,27 @@ class Engine:
                 await _safe(item.on_done(job, all_findings))
             return
 
+        # A cancelled scan leaves nothing in history (partial results are dropped).
+        if final_status == JobStatus.CANCELLED:
+            self._cancel_cleanup(job)
+            if item.on_done is not None:
+                await _safe(item.on_done(job, all_findings))
+            return
+
         self._finish(job, final_status)
         log.info("job %d %s: %d findings", job.id, final_status.value, len(all_findings))
         if item.on_done is not None:
             await _safe(item.on_done(job, all_findings))
+
+    def _cancel_cleanup(self, job: ScanJob) -> None:
+        """Drop a cancelled job (and its partial findings) from history; audit it."""
+        self._cancel_requested.discard(job.id)
+        self._store.delete_job(job.id)
+        job.status = JobStatus.CANCELLED
+        job.finished_at = None
+        self._store.add_audit("job_cancelled", target=job.target,
+                              decision="CANCELLED", engagement_id=job.engagement_id)
+        log.info("job %d cancelled — removed from history", job.id)
 
     def _finish(self, job: ScanJob, status: JobStatus) -> None:
         self._cancel_requested.discard(job.id)

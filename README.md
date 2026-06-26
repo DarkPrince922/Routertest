@@ -150,12 +150,17 @@ sudo journalctl -u pentest-bot -f
     replaced by the final summary. No new messages, no clutter.
   - **TXT batch**: send a `.txt` document with one target (IP or host) per line
     (commas/whitespace also split; `#` lines ignored; deduped; capped at 256).
-    Each target is scope-checked and queued; one aggregate message tracks
-    `Готово k/N` and ends with a combined summary (notable findings + scope
-    rejections). Per-target details and JSON live under **📊 История**.
+    Each target is scope-checked and queued. One aggregate message shows live
+    progress — `Готово k/N` plus a `▶️ Сейчас:` block listing the targets in
+    flight, each with its detected model and current step (and a
+    `🚫 не роутер, пропускаю` notice for non-routers) — and ends with a combined
+    summary (routers scanned / non-routers / out-of-scope / stopped, notable
+    findings). Per-target details and JSON live under **📊 История**.
   - **⏹️ Стоп**: the live progress message (single scan) and the batch message
     carry a stop button. Stopping a running scan cancels the current stage and
-    marks the job `CANCELLED`; the batch button stops every job in that batch.
+    the job is **removed from history** — partial results are dropped (the
+    cancellation is still recorded in the audit log). The batch button stops
+    every job in that batch.
   - **Device fingerprint & skip**: the nmap stage runs OS/device detection
     (`-sV -O`) and classifies the target as router / not-router / unknown
     (vendor banners + nmap `osclass`). If the target is **confidently not a

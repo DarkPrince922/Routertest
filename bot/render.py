@@ -149,17 +149,36 @@ def batch_summary(profile: ScanProfile,
     agg: dict[str, int] = {}
     notable: list[tuple[ScanJob, Finding]] = []
 
+    scanned = 0           # DONE
+    not_routers: list[str] = []   # SKIPPED targets
+    cancelled = 0         # CANCELLED (dropped from history)
+
     for job, findings in results:
+        status = job.status.value
+        if status == "CANCELLED":
+            cancelled += 1
+            continue       # partial results are not counted / kept
+        if status == "SKIPPED":
+            not_routers.append(job.target)
+        else:
+            scanned += 1
         total_findings += len(findings)
         for f in findings:
             agg[f.severity.value] = agg.get(f.severity.value, 0) + 1
             if severity_rank(f.severity) >= severity_rank(Severity.HIGH):
                 notable.append((job, f))
 
+    counts = [f"роутеров просканировано: {scanned}"]
+    if not_routers:
+        counts.append(f"не роутеры: {len(not_routers)}")
+    if rejected:
+        counts.append(f"вне scope: {len(rejected)}")
+    if cancelled:
+        counts.append(f"остановлено: {cancelled}")
+
     lines = [
         f"✅ <b>Пакетный скан завершён</b> · профиль: {esc(profile_ru)}",
-        f"Целей просканировано: {len(results)}"
-        + (f" · отклонено scope: {len(rejected)}" if rejected else ""),
+        " · ".join(counts),
         f"Всего находок: {total_findings} ({_breakdown_str(agg)})",
     ]
 
@@ -171,6 +190,14 @@ def batch_summary(profile: ScanProfile,
                          f"{esc(f.stage)}: {esc(f.title)}")
         if len(notable) > 10:
             lines.append(f"… и ещё {len(notable) - 10}")
+
+    if not_routers:
+        lines.append("")
+        lines.append("<b>Не роутеры (пропущены):</b>")
+        for target in not_routers[:5]:
+            lines.append(f"🚫 <code>{esc(target)}</code>")
+        if len(not_routers) > 5:
+            lines.append(f"… и ещё {len(not_routers) - 5}")
 
     if rejected:
         lines.append("")
