@@ -54,36 +54,22 @@ ROUTER_KEYWORDS = (
 async def nmap_stage(target: str) -> list[Finding]:
     """Run nmap with service + OS detection and classify the device type.
 
-    Tries ``-sV -O``; if OS detection needs privileges we don't have, falls back
-    to ``-sV`` so port/service results still work.
+    Scans the curated router ports first; if nothing is open it auto-retries the
+    top-1000 ports (catches services on unusual ports). OS detection (`-O`) is
+    dropped automatically when we lack the raw-socket privilege.
     """
-    base = ["-sV", "-Pn", "-T4", "--host-timeout", NMAP_HOST_TIMEOUT,
-            "-p", ROUTER_PORTS, "-oX", "-", target]
-    cmd = ["nmap", "-O", *base]
-    try:
-        rc, stdout, stderr = await run_cmd(cmd, timeout=NMAP_TIMEOUT)
-    except ToolNotFound:
-        return [Finding("nmap", Severity.INFO, "nmap not installed",
-                        {"error": "nmap binary not found on PATH"})]
+    parsed = await _run_and_parse(target, ["-p", ROUTER_PORTS])
+    if parsed is None:
+        return [Finding("nmap", Severity.INFO, "nmap not installed or no output",
+                        {"error": "nmap missing or produced no output"})]
+    port_findings, products, services, os_info, open_ports = parsed
 
-    # -O requires raw sockets; without privileges nmap quits before scanning.
-    if _needs_privileges(stderr) or not stdout.strip():
-        cmd = ["nmap", *base]
-        try:
-            rc, stdout, stderr = await run_cmd(cmd, timeout=NMAP_TIMEOUT)
-        except ToolNotFound:
-            return [Finding("nmap", Severity.INFO, "nmap not installed",
-                            {"error": "nmap binary not found on PATH"})]
-
-    if not stdout.strip():
-        return [Finding("nmap", Severity.INFO, "nmap produced no output",
-                        {"returncode": rc, "stderr": stderr[:500]})]
-
-    try:
-        port_findings, products, services, os_info, open_ports = _parse_nmap_xml(stdout)
-    except ET.ParseError as exc:
-        return [Finding("nmap", Severity.INFO, "nmap XML parse error",
-                        {"error": str(exc)})]
+    # Fallback: the router may expose its web UI / services on a non-standard
+    # port. If the fast scan found nothing open, widen to the top 1000 ports.
+    if not open_ports:
+        wider = await _run_and_parse(target, ["--top-ports", "1000"])
+        if wider is not None and wider[4]:
+            port_findings, products, services, os_info, open_ports = wider
 
     # Active banner enrichment (HTTP Server/title, SSH/Telnet) to sharpen the
     # model/firmware fingerprint. Best-effort and proxied if configured.
@@ -107,6 +93,34 @@ async def nmap_stage(target: str) -> list[Finding]:
 
 def _needs_privileges(stderr: str) -> bool:
     return "requires root privileges" in stderr.lower() or "requires r" in stderr.lower()
+
+
+async def _run_and_parse(target: str, port_args: list[str]):
+    """Run nmap (-sV -O, falling back to -sV) for the given ports and parse XML.
+
+    Returns the parsed tuple, or None if nmap is missing / produced no usable
+    output.
+    """
+    base = ["-sV", "-Pn", "-T4", "--host-timeout", NMAP_HOST_TIMEOUT,
+            *port_args, "-oX", "-", target]
+    try:
+        _, stdout, stderr = await run_cmd(["nmap", "-O", *base], timeout=NMAP_TIMEOUT)
+    except ToolNotFound:
+        return None
+
+    # -O needs raw sockets; without privileges nmap quits before scanning.
+    if _needs_privileges(stderr) or not stdout.strip():
+        try:
+            _, stdout, stderr = await run_cmd(["nmap", *base], timeout=NMAP_TIMEOUT)
+        except ToolNotFound:
+            return None
+
+    if not stdout.strip():
+        return None
+    try:
+        return _parse_nmap_xml(stdout)
+    except ET.ParseError:
+        return None
 
 
 def _parse_nmap_xml(xml_text: str):

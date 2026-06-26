@@ -5,8 +5,11 @@ which hosts are up, so the orchestrator only spends time scanning live hosts.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
+import shutil
+from collections.abc import Awaitable, Callable
 from xml.etree import ElementTree as ET
 
 from .stages._common import ToolNotFound, run_cmd
@@ -53,6 +56,60 @@ async def discover_hosts(cidr: str) -> tuple[list[str], int, str | None]:
 
     live = _parse_live_hosts(stdout)
     return live, total, None
+
+
+HostCallback = Callable[[str], Awaitable[None]]
+
+
+async def discover_hosts_stream(cidr: str, on_host: HostCallback
+                                ) -> tuple[int, str | None]:
+    """Ping-sweep ``cidr``, calling ``on_host(ip)`` for each live host as it is
+    found (so it can be queued immediately). Returns ``(total_hosts, error)``.
+    """
+    total = subnet_host_count(cidr)
+    if total is None:
+        return 0, "некорректная подсеть"
+    if total > MAX_SUBNET_HOSTS:
+        return total, (f"слишком большая подсеть ({total} хостов, лимит "
+                       f"{MAX_SUBNET_HOSTS})")
+
+    argv = ["nmap", "-sn", "-n", "-T4", "--max-retries", "1", cidr]
+    # stdbuf forces line buffering so live hosts stream out as they're found
+    # (nmap block-buffers stdout when piped, which would batch them to the end).
+    if shutil.which("stdbuf"):
+        argv = ["stdbuf", "-oL", *argv]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    except FileNotFoundError:
+        return total, "nmap не установлен"
+
+    prefix = "Nmap scan report for "
+    try:
+        while True:
+            raw = await proc.stdout.readline()
+            if not raw:
+                break
+            line = raw.decode("utf-8", errors="replace").strip()
+            # In `-sn -n`, every "scan report" line is a host that is UP.
+            if line.startswith(prefix):
+                ip = line[len(prefix):].strip().split(" ")[0]
+                if ip:
+                    await on_host(ip)
+        await proc.wait()
+    except Exception as exc:  # noqa: BLE001
+        with _suppress_proc_errors():
+            proc.kill()
+        return total, f"ошибка discovery: {exc}"
+    return total, None
+
+
+class _suppress_proc_errors:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return exc_type is not None and issubclass(exc_type, (ProcessLookupError, OSError))
 
 
 def _parse_live_hosts(xml_text: str) -> list[str]:

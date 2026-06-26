@@ -24,7 +24,7 @@ from .models import (
     Severity,
     severity_rank,
 )
-from .discovery import discover_hosts
+from .discovery import discover_hosts, discover_hosts_stream
 from .runtime import get_config
 from .scope import ScopeGate
 from .stages import nmap_stage, nuclei_stage, routersploit_stage, snmp_stage
@@ -107,6 +107,10 @@ class Engine:
     async def discover_hosts(self, cidr: str) -> tuple[list[str], int, str | None]:
         """Ping-sweep a subnet → (live_hosts, total_hosts, error)."""
         return await discover_hosts(cidr)
+
+    async def discover_hosts_stream(self, cidr: str, on_host) -> tuple[int, str | None]:
+        """Ping-sweep a subnet, invoking ``on_host(ip)`` per live host as found."""
+        return await discover_hosts_stream(cidr, on_host)
 
     def mark_interrupted(self) -> int:
         """At startup: flag scans left unfinished by the previous run.

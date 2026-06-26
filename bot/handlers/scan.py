@@ -565,7 +565,7 @@ async def _launch_batch(message: Message, targets: list[str], profile: ScanProfi
 async def _launch_subnet(message: Message, cidr: str, profile: ScanProfile,
                          actor_id: int | None, engine: Engine,
                          scope_gate: ScopeGate) -> None:
-    """Discover live hosts in a subnet, then batch-scan the live ones."""
+    """Sweep a subnet and queue each live host for scanning the moment it's found."""
     # Authorize the subnet (audited) before sending a single discovery packet.
     decision = scope_gate.check_network(cidr, actor_id=actor_id)
     if not decision.allowed:
@@ -577,29 +577,37 @@ async def _launch_subnet(message: Message, cidr: str, profile: ScanProfile,
         return
 
     await safe_edit_message(
-        message, f"🔎 Ищу живые хосты в <code>{cidr}</code>…", None)
+        message, f"🔎 Ищу живые хосты в <code>{cidr}</code> "
+        "и сразу ставлю их в очередь…", None)
 
-    live, total, error = await engine.discover_hosts(cidr)
-    if error:
-        await safe_edit_message(
-            message, f"⚠️ Не удалось просканировать подсеть <code>{cidr}</code>: "
-            f"{error}", keyboards.back_to_menu())
+    batch_key = message.message_id
+    tracker = _BatchTracker(message, profile, batch_key)
+    _BATCHES[batch_key] = tracker.job_ids
+    alert = _make_alert(message)
+    state = {"accepted": 0, "capped": 0}
+
+    async def on_host(ip: str) -> None:
+        # Each live host is scanned immediately while discovery keeps sweeping.
+        if state["accepted"] >= MAX_TARGETS:
+            state["capped"] += 1
+            return
+        job = engine.enqueue(ip, profile, actor_id,
+                             on_progress=tracker.on_progress,
+                             on_stage_done=tracker.on_stage_done,
+                             on_done=tracker.on_done, on_alert=alert)
+        if job.status.value != "REJECTED":
+            state["accepted"] += 1
+            tracker.job_ids.append(job.id)
+
+    total, error = await engine.discover_hosts_stream(cidr, on_host)
+
+    if state["accepted"] == 0:
+        msg = (f"⚠️ Подсеть <code>{cidr}</code>: {error}" if error
+               else f"🌐 <b>{cidr}</b>: живых хостов не найдено (проверено {total}).")
+        await safe_edit_message(message, msg, keyboards.back_to_menu())
+        _BATCHES.pop(batch_key, None)
         return
 
-    dead = max(0, total - len(live))
-    if not live:
-        await safe_edit_message(
-            message,
-            f"🌐 <b>{cidr}</b>: живых хостов не найдено (проверено {total}).",
-            keyboards.back_to_menu())
-        return
-
-    if len(live) > MAX_TARGETS:
-        live = live[:MAX_TARGETS]
-
-    await safe_edit_message(
-        message,
-        f"🌐 <b>{cidr}</b>: живых {len(live)} из {total} (мёртвых {dead}). "
-        f"Ставлю в очередь…",
-        None)
-    await _launch_batch(message, live, profile, actor_id, engine)
+    # Discovery finished — declare the final expected count so the tracker can
+    # render its summary once every queued host completes.
+    await tracker.finalize(state["accepted"], [])

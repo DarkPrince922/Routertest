@@ -157,9 +157,9 @@ sudo journalctl -u pentest-bot -f
   → confirm → live progress → summary + buttons `[📄 JSON] [🔁 Повторить] [🏠 Меню]`.
   - **Subnet (CIDR)**: enter or pick a network like `192.168.7.0/24`. The bot
     authorizes the whole subnet against scope, runs a **liveness sweep**
-    (`nmap -sn`) to find which hosts are up, reports `живых N из M (мёртвых K)`,
-    and then batch-scans only the live hosts (dead hosts are skipped). Capped at
-    a /20 for discovery and 256 live hosts for scanning.
+    (`nmap -sn`), and **queues each live host the moment it's found** — scanning
+    starts immediately and runs in parallel with the rest of the sweep (dead
+    hosts are skipped). Capped at a /20 for discovery and 256 live hosts.
   - **Single target**: one message grows into a live, human-readable narrative —
     `⏳ В очереди → 🔍 Сканирую порты и определяю устройство → 🧭 Определено
     устройство: MikroTik RouterOS → 🧪 Проверяю уязвимости → 🔑 …` — then is
@@ -292,6 +292,15 @@ are tuned for a balance of speed and coverage on routers:
   the bulk of the time on irrelevant hosts.
 
 ## Troubleshooting
+
+- **nmap reports all ports closed on a host you know is open** — almost always a
+  **reachability** problem, not nmap. If the bot runs on a cloud/VPS host, it
+  cannot reach a private LAN address like `192.168.1.1` (that's *its* network's
+  gateway, not your home router). Run the bot **on the same LAN** as the targets,
+  or tunnel into that LAN (VPN / SOCKS on the host). `SCAN_PROXY` only covers the
+  HTTP-layer tools — nmap is not proxied. The nmap stage also auto-retries the
+  top-1000 ports if the curated router-port list finds nothing, so a service on
+  an unusual port is still caught when the host is reachable.
 
 - **`systemctl status` shows `200/CHDIR`** — the project lives somewhere the
   service user (`pentestbot`) can't enter, typically under `/root`. Move it to
