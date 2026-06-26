@@ -87,8 +87,16 @@ def findings_page(findings: list[Finding], breakdown: dict[str, int]) -> str:
 def scope_view(config: ScopeConfig) -> str:
     cidrs = "\n".join(f"  • <code>{esc(c)}</code>" for c in config.allowed_cidrs) or "  (нет)"
     hosts = "\n".join(f"  • <code>{esc(h)}</code>" for h in sorted(config.allowed_hosts)) or "  (нет)"
+    if config.allow_all:
+        gate_note = (
+            "⚠️ <b>allow_all: ВКЛ</b> — scope-гейт отключён, разрешены любые цели "
+            "(решения по-прежнему пишутся в audit).\n\n"
+        )
+    else:
+        gate_note = ""
     return (
         "📋 <b>Scope (read-only)</b>\n\n"
+        f"{gate_note}"
         f"engagement_id: <code>{esc(config.engagement_id)}</code>\n\n"
         f"<b>Разрешённые CIDR:</b>\n{cidrs}\n\n"
         f"<b>Разрешённые хосты:</b>\n{hosts}\n\n"

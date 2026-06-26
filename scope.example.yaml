@@ -7,7 +7,12 @@
 # A target is allowed if EITHER:
 #   - its resolved IP falls inside one of allowed_cidrs, OR
 #   - the literal host string is listed in allowed_hosts.
+#
+# allow_all: when true the scope gate is DISABLED and every target is accepted
+# (decisions are still audited). Keep it false to enforce the ROE below.
 engagement_id: "lab-2026-01"
+
+allow_all: false
 
 allowed_cidrs:
   - 192.168.1.0/24

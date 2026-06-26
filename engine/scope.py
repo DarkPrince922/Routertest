@@ -28,6 +28,9 @@ class ScopeConfig:
     engagement_id: str
     allowed_cidrs: list[ipaddress.IPv4Network | ipaddress.IPv6Network]
     allowed_hosts: set[str]
+    # When True the scope gate allows EVERY target (decisions are still audited).
+    # Reversible kill-switch: set allow_all: false in scope.yaml to re-enable ROE.
+    allow_all: bool = False
 
     @classmethod
     def load(cls, path: Path) -> "ScopeConfig":
@@ -42,7 +45,12 @@ class ScopeConfig:
             except ValueError:
                 log.warning("scope.yaml: ignoring invalid CIDR %r", entry)
         hosts = {str(h).strip().lower() for h in (raw.get("allowed_hosts") or [])}
-        return cls(engagement_id=engagement_id, allowed_cidrs=cidrs, allowed_hosts=hosts)
+        allow_all = bool(raw.get("allow_all", False))
+        if allow_all:
+            log.warning("scope.yaml: allow_all=true — SCOPE GATE DISABLED, every "
+                        "target will be accepted")
+        return cls(engagement_id=engagement_id, allowed_cidrs=cidrs,
+                   allowed_hosts=hosts, allow_all=allow_all)
 
 
 def _resolve_ip(target: str) -> str | None:
@@ -89,7 +97,15 @@ class ScopeGate:
         host_allowed = host_key in self._config.allowed_hosts
         resolved_ip = _resolve_ip(target)
 
-        if resolved_ip is None and not host_allowed:
+        if self._config.allow_all:
+            # Scope gate disabled — accept everything but still audit the decision.
+            decision = ScopeDecision(
+                target=target,
+                resolved_ip=resolved_ip,
+                allowed=True,
+                reason="allow_all enabled in scope.yaml (scope gate disabled)",
+            )
+        elif resolved_ip is None and not host_allowed:
             decision = ScopeDecision(
                 target=target,
                 resolved_ip=None,

@@ -91,11 +91,18 @@ editable from the bot.
 
 ```yaml
 engagement_id: "lab-2026-01"
+allow_all: false          # true = disable the gate, accept ANY target (still audited)
 allowed_cidrs:
   - 192.168.1.0/24
 allowed_hosts:
   - myrouter.local
 ```
+
+> **`allow_all`** is a reversible kill-switch. With `allow_all: true` the scope
+> gate is disabled and every target is accepted (each decision is still written
+> to the audit log). Set it back to `false` to re-enforce the
+> `allowed_cidrs`/`allowed_hosts` ROE. Use `true` only on networks you are
+> authorized to test broadly (e.g. an isolated lab).
 
 A target is allowed if **either** its resolved IP falls inside an
 `allowed_cidrs` entry **or** the literal host string is in `allowed_hosts`. The
