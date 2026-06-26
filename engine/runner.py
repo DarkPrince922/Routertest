@@ -112,6 +112,15 @@ class Engine:
             log.info("flagged %d interrupted job(s) from a previous run", n)
         return n
 
+    def clear_interrupted(self) -> int:
+        """Discard all INTERRUPTED jobs without running them. Returns the count."""
+        n = self._store.delete_interrupted()
+        if n:
+            self._store.add_audit("interrupted_cleared", decision=str(n),
+                                  engagement_id=self._scope.engagement_id)
+            log.info("cleared %d interrupted job(s)", n)
+        return n
+
     def resume_interrupted(self) -> list[ScanJob]:
         """Re-queue all INTERRUPTED jobs (fresh run, no live UI callbacks)."""
         jobs = self._store.list_interrupted()

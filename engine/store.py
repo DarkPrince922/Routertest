@@ -183,6 +183,18 @@ class Store:
             ).fetchone()
         return int(row["c"])
 
+    def delete_interrupted(self) -> int:
+        """Drop all INTERRUPTED jobs (and their partial findings) from history."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM findings WHERE job_id IN "
+                "(SELECT id FROM jobs WHERE status=?)",
+                (JobStatus.INTERRUPTED.value,))
+            cur = self._conn.execute(
+                "DELETE FROM jobs WHERE status=?", (JobStatus.INTERRUPTED.value,))
+            self._conn.commit()
+            return cur.rowcount
+
     # ---------------------------------------------------------------- settings
     def get_setting(self, key: str, default: str | None = None) -> str | None:
         with self._lock:

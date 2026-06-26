@@ -45,6 +45,8 @@ def settings_menu(proxy: str | None, rsf_default_only: bool,
     if interrupted:
         kb.button(text=f"♻️ Возобновить прерванные ({interrupted})",
                   callback_data=SettingsCB(action="resume"))
+        kb.button(text=f"🗑 Очистить прерванные ({interrupted})",
+                  callback_data=SettingsCB(action="clear"))
     kb.button(text="🏠 Меню", callback_data=MenuCB(action="main"))
     kb.adjust(1)
     return kb.as_markup()

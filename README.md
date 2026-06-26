@@ -186,8 +186,8 @@ sudo journalctl -u pentest-bot -f
 - **📋 Scope** — read-only view of `engagement_id`, CIDRs and hosts.
 - **ℹ️ Статус** — queue depth, active scans, tool versions, interrupted count.
 - **⚙️ Настройки** — set/clear the SOCKS5/HTTP proxy, toggle the routersploit
-  creds mode (default-only ↔ +bruteforce), and resume interrupted scans. Proxy
-  and creds mode are persisted in the DB.
+  creds mode (default-only ↔ +bruteforce), and **resume or clear** interrupted
+  scans. Proxy and creds mode are persisted in the DB.
 
 ### Scan profiles
 

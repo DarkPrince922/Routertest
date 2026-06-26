@@ -115,3 +115,11 @@ async def resume(query: CallbackQuery, store: Store, engine: Engine) -> None:
     await query.answer(
         f"♻️ Возобновлено: {len(jobs)}" if jobs else "Прерванных сканов нет.",
         show_alert=bool(jobs))
+
+
+@router.callback_query(SettingsCB.filter(F.action == "clear"))
+async def clear_interrupted(query: CallbackQuery, store: Store, engine: Engine) -> None:
+    n = engine.clear_interrupted()
+    await _show(query, store)
+    await query.answer(
+        f"🗑 Очищено: {n}" if n else "Прерванных сканов нет.", show_alert=bool(n))
