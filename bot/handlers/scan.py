@@ -1,10 +1,17 @@
-"""The new-scan flow: target → profile → confirm → live progress → result."""
+"""The new-scan flow: target(s) → profile → confirm → live progress → result.
+
+Targets are always carried through the FSM as a list (``targets``). A single
+selection is a list of one; a TXT upload is a list of many. ``run`` dispatches to
+a single live-progress launch or a batched launch with an aggregate tracker.
+"""
 from __future__ import annotations
 
+import asyncio
+import io
 import logging
 import time
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -15,8 +22,9 @@ from engine.store import Store
 
 from .. import keyboards
 from ..callbacks import JobCB, MenuCB, ScanCB
-from ..render import PROFILE_RU, summary
+from ..render import PROFILE_RU, batch_summary, summary
 from ..states import ScanFlow
+from ..targets import MAX_TARGETS, parse_targets
 from ..utils import safe_edit, safe_edit_message
 
 log = logging.getLogger(__name__)
@@ -24,11 +32,22 @@ router = Router(name="scan")
 
 # Minimum seconds between progress edits (Telegram rate-limit protection).
 PROGRESS_MIN_INTERVAL = 2.0
+# Reject uploads larger than this (bytes) before downloading the body.
+MAX_FILE_BYTES = 1_000_000
 
 
 def scope_targets(scope_gate: ScopeGate) -> list[str]:
     """Explicit single-host targets offered as buttons (CIDRs use manual entry)."""
     return sorted(scope_gate.config.allowed_hosts)
+
+
+def _targets_label(targets: list[str]) -> str:
+    """Human label for one or many targets, used on profile/confirm screens."""
+    if len(targets) == 1:
+        return f"🎯 Цель: <code>{targets[0]}</code>"
+    preview = ", ".join(targets[:3])
+    more = f" … (+{len(targets) - 3})" if len(targets) > 3 else ""
+    return f"🎯 Целей: <b>{len(targets)}</b>\n<code>{preview}{more}</code>"
 
 
 # ----------------------------------------------------------------- step 1: target
@@ -37,7 +56,7 @@ async def start_flow(query: CallbackQuery, state: FSMContext, scope_gate: ScopeG
     await state.clear()
     await state.set_state(ScanFlow.choosing_target)
     targets = scope_targets(scope_gate)
-    hint = "" if targets else "\n\n<i>В scope нет именованных хостов — введите цель вручную.</i>"
+    hint = "" if targets else "\n\n<i>В scope нет именованных хостов — введите цель вручную или пришлите TXT.</i>"
     await safe_edit(
         query,
         "🎯 <b>Новый скан</b>\n\nШаг 1/3 — выберите цель:" + hint,
@@ -58,8 +77,8 @@ async def pick_target(query: CallbackQuery, callback_data: ScanCB,
     except (ValueError, IndexError):
         await query.answer("Цель недоступна, выберите заново.", show_alert=True)
         return
-    await state.update_data(target=target)
-    await _show_profile_step(query, state, target)
+    await state.update_data(targets=[target])
+    await _show_profile_step(query, state, [target])
 
 
 @router.callback_query(ScanCB.filter((F.step == "target") & (F.value == "")))
@@ -109,28 +128,89 @@ async def receive_manual(message: Message, state: FSMContext,
         await state.clear()
         return
 
-    await state.update_data(target=target)
+    await state.update_data(targets=[target])
     sent = await message.answer("…")
-    # Reuse the profile-step renderer against the freshly sent message.
-    await _show_profile_step_message(sent, state, target)
+    await _show_profile_step_message(sent, state, [target])
+
+
+# ----------------------------------------------------------------- TXT batch upload
+@router.callback_query(ScanCB.filter(F.step == "file"))
+async def ask_file(query: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ScanFlow.entering_file)
+    await safe_edit(
+        query,
+        "📄 Пришлите <b>.txt</b> файл со списком целей — по одной на строку "
+        "(можно через запятую/пробел). Строки с <code>#</code> игнорируются.\n\n"
+        f"Максимум {MAX_TARGETS} целей. Каждая проходит проверку scope перед запуском.",
+        keyboards.back_to_menu(),
+    )
+    await query.answer()
+
+
+@router.message(ScanFlow.entering_file, F.document)
+async def receive_file(message: Message, state: FSMContext, bot: Bot) -> None:
+    document = message.document
+    if document.file_size and document.file_size > MAX_FILE_BYTES:
+        await message.answer(
+            f"Файл слишком большой (>{MAX_FILE_BYTES // 1000} КБ). "
+            "Пришлите список поменьше.")
+        return
+
+    buf = io.BytesIO()
+    try:
+        await bot.download(document, destination=buf)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("file download failed: %s", exc)
+        await message.answer("Не удалось скачать файл, попробуйте ещё раз.")
+        return
+
+    try:
+        text = buf.getvalue().decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        await message.answer("Не удалось прочитать файл как текст.")
+        return
+
+    targets, skipped = parse_targets(text)
+    if not targets:
+        await message.answer(
+            "В файле не найдено валидных целей (IP или хостов). "
+            f"Пропущено строк: {skipped}.",
+            reply_markup=keyboards.back_to_menu(),
+        )
+        await state.clear()
+        return
+
+    await state.update_data(targets=targets)
+    note = f"\n<i>Пропущено невалидных: {skipped}</i>" if skipped else ""
+    sent = await message.answer(
+        f"📄 Загружено целей: <b>{len(targets)}</b>{note}")
+    await _show_profile_step_message(sent, state, targets)
+
+
+@router.message(ScanFlow.entering_file)
+async def file_wrong_type(message: Message) -> None:
+    await message.answer("Ожидается .txt файл документом. Пришлите файл или вернитесь в меню.",
+                         reply_markup=keyboards.back_to_menu())
 
 
 # ------------------------------------------------------------- step 2: profile
-async def _show_profile_step(query: CallbackQuery, state: FSMContext, target: str) -> None:
+async def _show_profile_step(query: CallbackQuery, state: FSMContext,
+                             targets: list[str]) -> None:
     await state.set_state(ScanFlow.choosing_profile)
     await safe_edit(
         query,
-        f"🎯 Цель: <code>{target}</code>\n\nШаг 2/3 — выберите профиль:",
+        f"{_targets_label(targets)}\n\nШаг 2/3 — выберите профиль:",
         keyboards.profile_choice(),
     )
     await query.answer()
 
 
-async def _show_profile_step_message(message: Message, state: FSMContext, target: str) -> None:
+async def _show_profile_step_message(message: Message, state: FSMContext,
+                                     targets: list[str]) -> None:
     await state.set_state(ScanFlow.choosing_profile)
     await safe_edit_message(
         message,
-        f"🎯 Цель: <code>{target}</code>\n\nШаг 2/3 — выберите профиль:",
+        f"{_targets_label(targets)}\n\nШаг 2/3 — выберите профиль:",
         keyboards.profile_choice(),
     )
 
@@ -152,21 +232,21 @@ async def pick_profile(query: CallbackQuery, callback_data: ScanCB,
 async def back_to_profile(query: CallbackQuery, state: FSMContext) -> None:
     """◀️ Назад from the confirm step."""
     data = await state.get_data()
-    target = data.get("target", "?")
-    await _show_profile_step(query, state, target)
+    targets = data.get("targets", [])
+    await _show_profile_step(query, state, targets or ["?"])
 
 
 # ------------------------------------------------------------- step 3: confirm
 async def _show_confirm(query: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ScanFlow.confirming)
     data = await state.get_data()
-    target = data.get("target", "?")
+    targets = data.get("targets", [])
     profile = data.get("profile", "?")
     profile_ru = PROFILE_RU.get(profile, profile)
     await safe_edit(
         query,
         "✅ <b>Подтверждение</b>\n\n"
-        f"Цель: <code>{target}</code>\n"
+        f"{_targets_label(targets)}\n"
         f"Профиль: {profile_ru}\n\n"
         "Запустить скан?",
         keyboards.confirm(),
@@ -176,21 +256,24 @@ async def _show_confirm(query: CallbackQuery, state: FSMContext) -> None:
 
 # ------------------------------------------------------------------ run / launch
 @router.callback_query(ScanCB.filter(F.step == "run"), ScanFlow.confirming)
-async def run_scan(query: CallbackQuery, state: FSMContext,
-                   engine: Engine) -> None:
+async def run_scan(query: CallbackQuery, state: FSMContext, engine: Engine) -> None:
     data = await state.get_data()
-    target = data.get("target")
+    targets = data.get("targets") or []
     profile_raw = data.get("profile")
     await state.clear()
 
-    if not target or not profile_raw:
+    if not targets or not profile_raw:
         await query.answer("Сессия истекла, начните заново.", show_alert=True)
         return
     profile = ScanProfile(profile_raw)
     actor_id = query.from_user.id if query.from_user else None
 
-    await _launch(query.message, target, profile, actor_id, engine)
-    await query.answer("Скан поставлен в очередь")
+    if len(targets) == 1:
+        await _launch_single(query.message, targets[0], profile, actor_id, engine)
+        await query.answer("Скан поставлен в очередь")
+    else:
+        await _launch_batch(query.message, targets, profile, actor_id, engine)
+        await query.answer(f"Поставлено в очередь: {len(targets)}")
 
 
 @router.callback_query(JobCB.filter(F.action == "repeat"))
@@ -201,14 +284,13 @@ async def repeat_scan(query: CallbackQuery, callback_data: JobCB,
         await query.answer("Job не найден.", show_alert=True)
         return
     actor_id = query.from_user.id if query.from_user else None
-    await _launch(query.message, job.target, job.profile, actor_id, engine)
+    await _launch_single(query.message, job.target, job.profile, actor_id, engine)
     await query.answer("Повтор поставлен в очередь")
 
 
-async def _launch(message: Message, target: str, profile: ScanProfile,
-                  actor_id: int | None, engine: Engine) -> None:
-    """Enqueue a scan and wire up live progress + result callbacks on ``message``."""
-    # Mutable cell to throttle progress edits to PROGRESS_MIN_INTERVAL.
+async def _launch_single(message: Message, target: str, profile: ScanProfile,
+                         actor_id: int | None, engine: Engine) -> None:
+    """Enqueue one scan with live per-stage progress + result summary."""
     last_edit = {"t": 0.0}
 
     async def on_progress(job: ScanJob, stage_name: str, idx: int, total: int) -> None:
@@ -224,11 +306,8 @@ async def _launch(message: Message, target: str, profile: ScanProfile,
         )
 
     async def on_done(job: ScanJob, findings: list[Finding]) -> None:
-        await safe_edit_message(
-            message,
-            summary(job, findings),
-            keyboards.result_actions(job.id),
-        )
+        await safe_edit_message(message, summary(job, findings),
+                                keyboards.result_actions(job.id))
 
     job = engine.enqueue(target, profile, actor_id,
                          on_progress=on_progress, on_done=on_done)
@@ -248,3 +327,69 @@ async def _launch(message: Message, target: str, profile: ScanProfile,
         f"(позиция в очереди: {engine.queue_size}).",
         None,
     )
+
+
+class _BatchTracker:
+    """Aggregates many jobs into one live-updating summary message."""
+
+    def __init__(self, message: Message, profile: ScanProfile) -> None:
+        self._message = message
+        self._profile = profile
+        self._lock = asyncio.Lock()
+        self._results: list[tuple[ScanJob, list[Finding]]] = []
+        self._rejected: list[tuple[str, str]] = []
+        self._total: int | None = None  # accepted count, set on finalize
+
+    async def on_done(self, job: ScanJob, findings: list[Finding]) -> None:
+        async with self._lock:
+            self._results.append((job, findings))
+            await self._render()
+
+    async def finalize(self, accepted: int, rejected: list[tuple[str, str]]) -> None:
+        async with self._lock:
+            self._total = accepted
+            self._rejected = rejected
+            await self._render()
+
+    async def _render(self) -> None:
+        done = len(self._results)
+        complete = self._total is not None and done >= self._total
+        if not complete:
+            total = "?" if self._total is None else self._total
+            await safe_edit_message(
+                self._message,
+                f"📋 <b>Пакетный скан</b> · профиль: {PROFILE_RU.get(self._profile.value, self._profile.value)}\n"
+                f"Готово: {done}/{total}…",
+                None,
+            )
+        else:
+            await safe_edit_message(
+                self._message,
+                batch_summary(self._profile, self._results, self._rejected),
+                keyboards.batch_done(),
+            )
+
+
+async def _launch_batch(message: Message, targets: list[str], profile: ScanProfile,
+                        actor_id: int | None, engine: Engine) -> None:
+    """Enqueue many scans; one aggregate message tracks completion."""
+    tracker = _BatchTracker(message, profile)
+    rejected: list[tuple[str, str]] = []
+    accepted = 0
+
+    await safe_edit_message(
+        message,
+        f"📋 Ставлю в очередь {len(targets)} целей…",
+        None,
+    )
+
+    for target in targets:
+        job = engine.enqueue(target, profile, actor_id, on_done=tracker.on_done)
+        if job.status.value == "REJECTED":
+            rejected.append((target, job.error or "вне scope"))
+        else:
+            accepted += 1
+
+    # Set the expected count last so completion is only declared once every
+    # accepted job is queued (a fast job's on_done can fire mid-loop).
+    await tracker.finalize(accepted, rejected)

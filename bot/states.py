@@ -9,5 +9,6 @@ class ScanFlow(StatesGroup):
 
     choosing_target = State()
     entering_manual = State()
+    entering_file = State()
     choosing_profile = State()
     confirming = State()

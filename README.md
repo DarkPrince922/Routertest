@@ -120,9 +120,15 @@ sudo journalctl -u pentest-bot -f
 
 `/start` opens the main menu:
 
-- **🎯 Новый скан** — pick a target (button per scope host, or ✏️ manual entry) →
-  pick a profile (⚡ Быстрый / 🔍 Стандартный / 💣 Полный) → confirm → a single
-  message live-updates per stage → summary + buttons `[📄 JSON] [🔁 Повторить] [🏠 Меню]`.
+- **🎯 Новый скан** — pick a target (button per scope host, ✏️ manual entry, or
+  📄 a TXT list) → pick a profile (⚡ Быстрый / 🔍 Стандартный / 💣 Полный) →
+  confirm → live progress → summary + buttons `[📄 JSON] [🔁 Повторить] [🏠 Меню]`.
+  - **Single target**: one message live-updates per stage, then shows the summary.
+  - **TXT batch**: send a `.txt` document with one target (IP or host) per line
+    (commas/whitespace also split; `#` lines ignored; deduped; capped at 256).
+    Each target is scope-checked and queued; one aggregate message tracks
+    `Готово k/N` and ends with a combined summary (notable findings + scope
+    rejections). Per-target details and JSON live under **📊 История**.
 - **📊 История** — paginated list of past scans; open one to see the severity
   breakdown, paginated findings, and a JSON export.
 - **📋 Scope** — read-only view of `engagement_id`, CIDRs and hosts.

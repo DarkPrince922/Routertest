@@ -42,8 +42,18 @@ def target_choice(targets: list[str]) -> InlineKeyboardMarkup:
     for idx, target in enumerate(targets):
         kb.button(text=f"🎯 {target}", callback_data=ScanCB(step="target", value=str(idx)))
     kb.button(text="✏️ Ввести вручную", callback_data=ScanCB(step="manual"))
+    kb.button(text="📄 Список из TXT", callback_data=ScanCB(step="file"))
     kb.button(text="🏠 Меню", callback_data=MenuCB(action="main"))
     kb.adjust(1)
+    return kb.as_markup()
+
+
+def batch_done() -> InlineKeyboardMarkup:
+    """Buttons under a finished batch scan."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📊 История", callback_data=MenuCB(action="history"))
+    kb.button(text="🏠 Меню", callback_data=MenuCB(action="main"))
+    kb.adjust(2)
     return kb.as_markup()
 
 

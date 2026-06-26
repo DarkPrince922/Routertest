@@ -6,6 +6,7 @@ import html
 from engine.models import (
     Finding,
     ScanJob,
+    ScanProfile,
     Severity,
     severity_rank,
 )
@@ -54,6 +55,51 @@ def summary(job: ScanJob, findings: list[Finding]) -> str:
         if f.severity == Severity.INFO:
             continue
         lines.append(f"[{f.severity.value}] {esc(f.stage)}: {esc(f.title)}")
+    return "\n".join(lines)
+
+
+def batch_summary(profile: ScanProfile,
+                  results: list[tuple[ScanJob, list[Finding]]],
+                  rejected: list[tuple[str, str]]) -> str:
+    """Aggregate summary for a finished batch scan."""
+    profile_ru = PROFILE_RU.get(profile.value, profile.value)
+    total_findings = 0
+    agg: dict[str, int] = {}
+    notable: list[tuple[ScanJob, Finding]] = []
+
+    for job, findings in results:
+        total_findings += len(findings)
+        for f in findings:
+            agg[f.severity.value] = agg.get(f.severity.value, 0) + 1
+            if severity_rank(f.severity) >= severity_rank(Severity.HIGH):
+                notable.append((job, f))
+
+    lines = [
+        f"✅ <b>Пакетный скан завершён</b> · профиль: {esc(profile_ru)}",
+        f"Целей просканировано: {len(results)}"
+        + (f" · отклонено scope: {len(rejected)}" if rejected else ""),
+        f"Всего находок: {total_findings} ({_breakdown_str(agg)})",
+    ]
+
+    if notable:
+        lines.append("")
+        lines.append(f"<b>Важное ({len(notable)}):</b>")
+        for job, f in notable[:10]:
+            lines.append(f"🔴 <code>{esc(job.target)}</code> [{f.severity.value}] "
+                         f"{esc(f.stage)}: {esc(f.title)}")
+        if len(notable) > 10:
+            lines.append(f"… и ещё {len(notable) - 10}")
+
+    if rejected:
+        lines.append("")
+        lines.append("<b>Отклонены scope:</b>")
+        for target, reason in rejected[:5]:
+            lines.append(f"⛔ <code>{esc(target)}</code> — {esc(reason)}")
+        if len(rejected) > 5:
+            lines.append(f"… и ещё {len(rejected) - 5}")
+
+    lines.append("")
+    lines.append("<i>Детали и JSON по каждой цели — в «📊 История».</i>")
     return "\n".join(lines)
 
 
