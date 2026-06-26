@@ -38,6 +38,15 @@ async def run_cmd(cmd: list[str], timeout: float) -> tuple[int, str, str]:
             pass
         await proc.wait()
         raise
+    except asyncio.CancelledError:
+        # User pressed Stop — kill the tool process immediately, don't linger.
+        log.info("run_cmd cancelled, killing: %s", cmd[0])
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        raise
 
     return (
         proc.returncode if proc.returncode is not None else -1,

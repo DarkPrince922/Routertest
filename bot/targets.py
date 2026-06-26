@@ -4,8 +4,10 @@ from __future__ import annotations
 import ipaddress
 import re
 
-# Hard cap so a huge file can't flood the queue.
-MAX_TARGETS = 256
+# Safety ceiling on how many targets one input can enqueue (high enough to be
+# effectively unlimited for normal use; prevents a pathological file from
+# enqueueing millions of jobs).
+MAX_TARGETS = 65536
 
 # A permissive hostname label check (RFC-1123-ish): letters/digits/hyphen,
 # dot-separated, no leading/trailing hyphen per label.
@@ -54,7 +56,7 @@ def parse_targets(text: str) -> tuple[list[str], int, int]:
             token = token.strip()
             if not token:
                 continue
-            if not _is_valid_target(token):
+            if not (_is_valid_target(token) or is_cidr(token)):
                 skipped += 1
                 continue
             key = token.lower()

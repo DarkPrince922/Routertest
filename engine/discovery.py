@@ -16,9 +16,10 @@ from .stages._common import ToolNotFound, run_cmd
 
 log = logging.getLogger(__name__)
 
-DISCOVERY_TIMEOUT = 600.0
-# Refuse to sweep absurdly large ranges (a /20 is already 4094 hosts).
-MAX_SUBNET_HOSTS = 4096
+DISCOVERY_TIMEOUT = 3600.0
+# Absolute safety ceiling — allows up to a /16 (65534 hosts). Bigger ranges
+# (e.g. a /8 with millions of hosts) are refused to avoid an accidental footgun.
+MAX_SUBNET_HOSTS = 65536
 
 
 def subnet_host_count(cidr: str) -> int | None:
@@ -97,10 +98,19 @@ async def discover_hosts_stream(cidr: str, on_host: HostCallback
                 if ip:
                     await on_host(ip)
         await proc.wait()
+    except asyncio.CancelledError:
+        # Stop pressed — kill the sweep immediately.
+        with _suppress_proc_errors():
+            proc.kill()
+        raise
     except Exception as exc:  # noqa: BLE001
         with _suppress_proc_errors():
             proc.kill()
         return total, f"ошибка discovery: {exc}"
+    finally:
+        if proc.returncode is None:
+            with _suppress_proc_errors():
+                proc.kill()
     return total, None
 
 

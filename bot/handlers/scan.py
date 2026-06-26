@@ -40,10 +40,10 @@ log = logging.getLogger(__name__)
 router = Router(name="scan")
 
 # Reject uploads larger than this (bytes) before downloading the body.
-MAX_FILE_BYTES = 1_000_000
+MAX_FILE_BYTES = 10_000_000
 
-# batch_key (aggregate message id) -> list of that batch's job ids, for stop-all.
-_BATCHES: dict[int, list[int]] = {}
+# batch_key (aggregate message id) -> control object, for live stop-all.
+_BATCHES: dict[int, "_BatchControl"] = {}
 
 
 def _make_alert(message: Message):
@@ -71,9 +71,16 @@ def _targets_label(targets: list[str]) -> str:
             n = subnet_host_count(t)
             return f"🌐 Подсеть: <code>{t}</code> ({n} адресов)"
         return f"🎯 Цель: <code>{t}</code>"
+    subnets = sum(1 for t in targets if is_cidr(t))
+    hosts = len(targets) - subnets
+    parts = []
+    if hosts:
+        parts.append(f"хостов: {hosts}")
+    if subnets:
+        parts.append(f"подсетей: {subnets}")
     preview = ", ".join(targets[:3])
     more = f" … (+{len(targets) - 3})" if len(targets) > 3 else ""
-    return f"🎯 Целей: <b>{len(targets)}</b>\n<code>{preview}{more}</code>"
+    return f"🎯 Целей: <b>{len(targets)}</b> ({', '.join(parts)})\n<code>{preview}{more}</code>"
 
 
 # ----------------------------------------------------------------- step 1: target
@@ -139,45 +146,43 @@ async def ask_manual(query: CallbackQuery, state: FSMContext) -> None:
 @router.message(ScanFlow.entering_manual)
 async def receive_manual(message: Message, state: FSMContext,
                          scope_gate: ScopeGate) -> None:
-    target = (message.text or "").strip()
-    if not target:
-        await message.answer("Пустая цель. Введите IP, хост или подсеть (CIDR).")
+    raw = (message.text or "").strip()
+    if not raw:
+        await message.answer("Пусто. Введите IP, хост или подсеть(и) — можно несколько "
+                             "через пробел/запятую/с новой строки.")
+        return
+
+    # Accept one or many tokens: hosts, IPs and CIDR subnets, mixed.
+    targets, skipped, truncated = parse_targets(raw)
+    if not targets:
+        await message.answer("Не распознал ни одной валидной цели (IP/хост/CIDR). "
+                             "Попробуйте ещё раз.")
         return
 
     actor_id = message.from_user.id if message.from_user else None
 
-    # A CIDR subnet → authorize the whole network now; live hosts are found and
-    # checked individually at launch.
-    if is_cidr(target):
-        decision = scope_gate.check_network(target, actor_id=actor_id)
+    # Single plain host → pre-check scope for immediate feedback.
+    if len(targets) == 1 and not is_cidr(targets[0]):
+        decision = scope_gate.check(targets[0], actor_id=actor_id)
         if not decision.allowed:
             await message.answer(
-                f"⛔ <b>REJECTED</b>: <code>{target}</code>\n"
+                f"⛔ <b>REJECTED</b>: <code>{targets[0]}</code>\n"
                 f"Причина: {decision.reason}\n\nИнструменты не запускались.",
-                reply_markup=keyboards.back_to_menu(),
-            )
+                reply_markup=keyboards.back_to_menu())
             await state.clear()
             return
-        await state.update_data(targets=[target])
-        sent = await message.answer("…")
-        await _show_profile_step_message(sent, state, [target])
-        return
 
-    # Pre-check scope so the user gets immediate feedback on a rejected target.
-    decision = scope_gate.check(target, actor_id=actor_id)
-    if not decision.allowed:
-        await message.answer(
-            f"⛔ <b>REJECTED</b>: <code>{target}</code>\n"
-            f"Причина: {decision.reason}\n\n"
-            "Инструменты не запускались. Событие записано в audit.",
-            reply_markup=keyboards.back_to_menu(),
-        )
-        await state.clear()
-        return
-
-    await state.update_data(targets=[target])
-    sent = await message.answer("…")
-    await _show_profile_step_message(sent, state, [target])
+    await state.update_data(targets=targets)
+    note = ""
+    if skipped or truncated:
+        bits = []
+        if skipped:
+            bits.append(f"пропущено невалидных: {skipped}")
+        if truncated:
+            bits.append(f"обрезано по лимиту: {truncated}")
+        note = "\n<i>" + "; ".join(bits) + "</i>"
+    sent = await message.answer(f"Принято целей: <b>{len(targets)}</b>{note}")
+    await _show_profile_step_message(sent, state, targets)
 
 
 # ----------------------------------------------------------------- TXT batch upload
@@ -322,15 +327,12 @@ async def run_scan(query: CallbackQuery, state: FSMContext, engine: Engine,
     profile = ScanProfile(profile_raw)
     actor_id = query.from_user.id if query.from_user else None
 
-    if len(targets) == 1 and is_cidr(targets[0]):
-        await query.answer("Ищу живые хосты…")
-        await _launch_subnet(query.message, targets[0], profile, actor_id, engine, scope_gate)
-    elif len(targets) == 1:
+    if len(targets) == 1 and not is_cidr(targets[0]):
         await _launch_single(query.message, targets[0], profile, actor_id, engine)
         await query.answer("Скан поставлен в очередь")
     else:
-        await _launch_batch(query.message, targets, profile, actor_id, engine)
-        await query.answer(f"Поставлено в очередь: {len(targets)}")
+        await query.answer("Запускаю…")
+        await _launch_targets(query.message, targets, profile, actor_id, engine, scope_gate)
 
 
 @router.callback_query(JobCB.filter(F.action == "repeat"))
@@ -428,11 +430,18 @@ async def stop_scan(query: CallbackQuery, callback_data: JobCB, engine: Engine) 
 
 @router.callback_query(JobCB.filter(F.action == "stopbatch"))
 async def stop_batch(query: CallbackQuery, callback_data: JobCB, engine: Engine) -> None:
-    job_ids = list(_BATCHES.get(callback_data.job_id, []))
-    cancelled = sum(1 for jid in job_ids if engine.request_cancel(jid))
+    ctrl = _BATCHES.get(callback_data.job_id)
+    if ctrl is None:
+        await query.answer("Активных сканов нет.", show_alert=True)
+        return
+    ctrl.stopped = True
+    # Stop discovery (so no new hosts get queued) and cancel everything running.
+    for task in ctrl.discovery_tasks:
+        task.cancel()
+    cancelled = sum(1 for jid in list(ctrl.job_ids) if engine.request_cancel(jid))
     await query.answer(
-        f"⏹️ Останавливаю: {cancelled}" if cancelled else "Активных сканов нет.",
-        show_alert=not cancelled)
+        f"⏹️ Останавливаю всё ({cancelled})" if cancelled else "Останавливаю…",
+        show_alert=bool(cancelled))
 
 
 # Compact "doing now" labels for the batch aggregate view.
@@ -443,21 +452,35 @@ _BATCH_DOING = {
 }
 
 
+class _BatchControl:
+    """Per-batch control: job ids (for stop-all), a stop flag, discovery tasks."""
+
+    def __init__(self) -> None:
+        self.job_ids: list[int] = []
+        self.stopped: bool = False
+        self.discovery_tasks: list[asyncio.Task] = []
+
+
 class _BatchTracker:
     """Aggregates many jobs into one live message: progress, current targets,
     not-router notices, and a final combined summary."""
 
-    def __init__(self, message: Message, profile: ScanProfile, batch_key: int) -> None:
+    def __init__(self, message: Message, profile: ScanProfile, batch_key: int,
+                 control: _BatchControl) -> None:
         self._message = message
         self._profile = profile
         self._batch_key = batch_key
+        self._control = control
         self._lock = asyncio.Lock()
         self._results: list[tuple[ScanJob, list[Finding]]] = []
         self._rejected: list[tuple[str, str]] = []
         self._total: int | None = None   # accepted count, set on finalize
-        self.job_ids: list[int] = []      # shared with _BATCHES for stop-all
         self._active: dict[int, str] = {}  # job_id -> current status line
         self._device: dict[int, str] = {}  # job_id -> detected model
+
+    @property
+    def job_ids(self) -> list[int]:
+        return self._control.job_ids
 
     # ---- live per-job events -------------------------------------------------
     async def on_progress(self, job: ScanJob, stage: str, idx: int, total: int) -> None:
@@ -530,23 +553,34 @@ class _BatchTracker:
                                 keyboards.batch_running(self._batch_key))
 
 
-async def _launch_batch(message: Message, targets: list[str], profile: ScanProfile,
-                        actor_id: int | None, engine: Engine) -> None:
-    """Enqueue many scans; one aggregate message tracks completion."""
+async def _launch_targets(message: Message, tokens: list[str], profile: ScanProfile,
+                          actor_id: int | None, engine: Engine,
+                          scope_gate: ScopeGate) -> None:
+    """Unified batch launch for any mix of plain hosts and CIDR subnets.
+
+    Plain hosts are queued directly; each subnet is ping-swept and its live hosts
+    are queued the moment they're found. A single aggregate message tracks it all,
+    and the stop button cancels discovery + every queued/running scan instantly.
+    """
     batch_key = message.message_id
-    tracker = _BatchTracker(message, profile, batch_key)
-    _BATCHES[batch_key] = tracker.job_ids  # same list object — fills as we enqueue
+    control = _BatchControl()
+    _BATCHES[batch_key] = control
+    tracker = _BatchTracker(message, profile, batch_key, control)
     alert = _make_alert(message)
     rejected: list[tuple[str, str]] = []
-    accepted = 0
+
+    cidrs = [t for t in tokens if is_cidr(t)]
+    hosts = [t for t in tokens if not is_cidr(t)]
 
     await safe_edit_message(
         message,
-        f"📋 Ставлю в очередь {len(targets)} целей…",
-        keyboards.batch_running(batch_key),
-    )
+        ("🔎 Ищу живые хосты и сразу ставлю в очередь…" if cidrs
+         else f"📋 Ставлю в очередь {len(hosts)} целей…"),
+        keyboards.batch_running(batch_key))
 
-    for target in targets:
+    async def add(target: str) -> None:
+        if control.stopped:
+            return
         job = engine.enqueue(target, profile, actor_id,
                              on_progress=tracker.on_progress,
                              on_stage_done=tracker.on_stage_done,
@@ -554,60 +588,38 @@ async def _launch_batch(message: Message, targets: list[str], profile: ScanProfi
         if job.status.value == "REJECTED":
             rejected.append((target, job.error or "вне scope"))
         else:
-            accepted += 1
-            tracker.job_ids.append(job.id)
+            control.job_ids.append(job.id)
 
-    # Set the expected count last so completion is only declared once every
-    # accepted job is queued (a fast job's on_done can fire mid-loop).
-    await tracker.finalize(accepted, rejected)
+    # Direct hosts first.
+    for host in hosts:
+        if control.stopped:
+            break
+        await add(host)
 
+    # Then sweep each subnet, queuing live hosts as they stream in.
+    for cidr in cidrs:
+        if control.stopped:
+            break
+        decision = scope_gate.check_network(cidr, actor_id=actor_id)
+        if not decision.allowed:
+            rejected.append((cidr, decision.reason))
+            continue
+        task = asyncio.ensure_future(engine.discover_hosts_stream(cidr, add))
+        control.discovery_tasks.append(task)
+        try:
+            await task
+        except asyncio.CancelledError:
+            break
 
-async def _launch_subnet(message: Message, cidr: str, profile: ScanProfile,
-                         actor_id: int | None, engine: Engine,
-                         scope_gate: ScopeGate) -> None:
-    """Sweep a subnet and queue each live host for scanning the moment it's found."""
-    # Authorize the subnet (audited) before sending a single discovery packet.
-    decision = scope_gate.check_network(cidr, actor_id=actor_id)
-    if not decision.allowed:
+    if not control.job_ids:
+        note = ("остановлено" if control.stopped
+                else "живых/доступных целей не найдено")
         await safe_edit_message(
-            message,
-            f"⛔ <b>REJECTED</b>: <code>{cidr}</code>\nПричина: {decision.reason}\n\n"
-            "Инструменты не запускались.",
+            message, f"🌐 Готово: {note}. Поставлено в очередь: 0.",
             keyboards.back_to_menu())
-        return
-
-    await safe_edit_message(
-        message, f"🔎 Ищу живые хосты в <code>{cidr}</code> "
-        "и сразу ставлю их в очередь…", None)
-
-    batch_key = message.message_id
-    tracker = _BatchTracker(message, profile, batch_key)
-    _BATCHES[batch_key] = tracker.job_ids
-    alert = _make_alert(message)
-    state = {"accepted": 0, "capped": 0}
-
-    async def on_host(ip: str) -> None:
-        # Each live host is scanned immediately while discovery keeps sweeping.
-        if state["accepted"] >= MAX_TARGETS:
-            state["capped"] += 1
-            return
-        job = engine.enqueue(ip, profile, actor_id,
-                             on_progress=tracker.on_progress,
-                             on_stage_done=tracker.on_stage_done,
-                             on_done=tracker.on_done, on_alert=alert)
-        if job.status.value != "REJECTED":
-            state["accepted"] += 1
-            tracker.job_ids.append(job.id)
-
-    total, error = await engine.discover_hosts_stream(cidr, on_host)
-
-    if state["accepted"] == 0:
-        msg = (f"⚠️ Подсеть <code>{cidr}</code>: {error}" if error
-               else f"🌐 <b>{cidr}</b>: живых хостов не найдено (проверено {total}).")
-        await safe_edit_message(message, msg, keyboards.back_to_menu())
         _BATCHES.pop(batch_key, None)
         return
 
-    # Discovery finished — declare the final expected count so the tracker can
-    # render its summary once every queued host completes.
-    await tracker.finalize(state["accepted"], [])
+    # Declare the final expected count so the tracker renders its summary once
+    # every queued host completes.
+    await tracker.finalize(len(control.job_ids), rejected)

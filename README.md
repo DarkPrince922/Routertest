@@ -155,11 +155,13 @@ sudo journalctl -u pentest-bot -f
 - **🎯 Новый скан** — pick a target (button per scope host **and CIDR**, ✏️ manual
   entry, or 📄 a TXT list) → pick a profile (⚡ Быстрый / 🔍 Стандартный / 💣 Полный)
   → confirm → live progress → summary + buttons `[📄 JSON] [🔁 Повторить] [🏠 Меню]`.
-  - **Subnet (CIDR)**: enter or pick a network like `192.168.7.0/24`. The bot
-    authorizes the whole subnet against scope, runs a **liveness sweep**
-    (`nmap -sn`), and **queues each live host the moment it's found** — scanning
-    starts immediately and runs in parallel with the rest of the sweep (dead
-    hosts are skipped). Capped at a /20 for discovery and 256 live hosts.
+  - **Subnet(s) (CIDR)**: enter or pick a network like `192.168.7.0/24`. You can
+    pass **several subnets and hosts at once** (manual entry or TXT file, e.g.
+    `192.168.0.0/24, 192.168.4.0/24, 10.0.0.5`). Each subnet is authorized against
+    scope, ping-swept (`nmap -sn`), and **each live host is queued the moment it's
+    found** — scanning starts immediately, in parallel with the rest of the sweep
+    (dead hosts skipped). Discovery allows up to a /16; per-input target ceiling
+    is 65536 (effectively unlimited for normal use).
   - **Single target**: one message grows into a live, human-readable narrative —
     `⏳ В очереди → 🔍 Сканирую порты и определяю устройство → 🧭 Определено
     устройство: MikroTik RouterOS → 🧪 Проверяю уязвимости → 🔑 …` — then is
@@ -173,10 +175,11 @@ sudo journalctl -u pentest-bot -f
     summary (routers scanned / non-routers / out-of-scope / stopped, notable
     findings). Per-target details and JSON live under **📊 История**.
   - **⏹️ Стоп**: the live progress message (single scan) and the batch message
-    carry a stop button. Stopping a running scan cancels the current stage and
-    the job is **removed from history** — partial results are dropped (the
-    cancellation is still recorded in the audit log). The batch button stops
-    every job in that batch.
+    carry a stop button. It is **immediate** — the running tool processes
+    (nmap/nuclei/discovery sweep) are killed at once, in-flight subnet discovery
+    stops queuing new hosts, and every queued/running job in the batch is
+    cancelled. Cancelled jobs are **removed from history** (partial results
+    dropped); the cancellation is still recorded in the audit log.
   - **Device fingerprint & skip**: the nmap stage runs OS/device detection
     (`-sV -O`) and classifies the target as router / not-router / unknown
     (vendor banners + nmap `osclass`). If the target is **confidently not a
