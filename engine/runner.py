@@ -33,8 +33,10 @@ log = logging.getLogger(__name__)
 
 # A stage is an async callable: target -> list[Finding].
 Stage = Callable[[str], Awaitable[list[Finding]]]
-# Progress callback: (job, stage_name, index, total) -> awaitable.
+# Progress callback (a stage is about to run): (job, stage_name, index, total).
 ProgressCB = Callable[[ScanJob, str, int, int], Awaitable[None]]
+# Stage-done callback (a stage just finished): (job, stage_name, findings, idx, total).
+StageDoneCB = Callable[[ScanJob, str, list[Finding], int, int], Awaitable[None]]
 # Completion callback: (job, findings) -> awaitable.
 DoneCB = Callable[[ScanJob, list[Finding]], Awaitable[None]]
 # Alert callback for a high/critical finding: (job, finding, device_label).
@@ -58,12 +60,14 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
 
 
 class _QueueItem:
-    __slots__ = ("job", "on_progress", "on_done", "on_alert")
+    __slots__ = ("job", "on_progress", "on_stage_done", "on_done", "on_alert")
 
     def __init__(self, job: ScanJob, on_progress: ProgressCB | None,
+                 on_stage_done: StageDoneCB | None,
                  on_done: DoneCB | None, on_alert: AlertCB | None) -> None:
         self.job = job
         self.on_progress = on_progress
+        self.on_stage_done = on_stage_done
         self.on_done = on_done
         self.on_alert = on_alert
 
@@ -105,6 +109,7 @@ class Engine:
     # --------------------------------------------------------------- enqueue
     def enqueue(self, target: str, profile: ScanProfile, actor_id: int | None,
                 on_progress: ProgressCB | None = None,
+                on_stage_done: StageDoneCB | None = None,
                 on_done: DoneCB | None = None,
                 on_alert: AlertCB | None = None) -> ScanJob:
         """Scope-check, create the job and enqueue it (or reject).
@@ -136,7 +141,8 @@ class Engine:
         self._store.add_audit("job_queued", actor_id=actor_id, target=target,
                               resolved_ip=decision.resolved_ip, decision="QUEUED",
                               engagement_id=engagement_id)
-        self._queue.put_nowait(_QueueItem(job, on_progress, on_done, on_alert))
+        self._queue.put_nowait(
+            _QueueItem(job, on_progress, on_stage_done, on_done, on_alert))
         return job
 
     # ------------------------------------------------------------ cancellation
@@ -213,6 +219,9 @@ class Engine:
                 findings = await self._run_stage(name, stage, job.target, job.id)
                 self._store.add_findings(job.id, findings)
                 all_findings.extend(findings)
+
+                if item.on_stage_done is not None:
+                    await _safe(item.on_stage_done(job, name, findings, idx, total))
 
                 # Immediate alert for high/critical findings.
                 if item.on_alert is not None:

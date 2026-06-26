@@ -82,6 +82,53 @@ def summary(job: ScanJob, findings: list[Finding]) -> str:
     return "\n".join(lines)
 
 
+STAGE_START_LINE = {
+    "nmap": "🔍 Сканирую порты и определяю устройство…",
+    "nuclei": "🧪 Проверяю известные уязвимости…",
+    "routersploit": "🔑 Проверяю учётные данные по умолчанию…",
+}
+
+
+def stage_start_line(stage_name: str) -> str:
+    """Human 'doing X now' line for the live narrative."""
+    return STAGE_START_LINE.get(stage_name, f"▶️ {esc(stage_name)}…")
+
+
+def stage_done_lines(stage_name: str, findings: list[Finding]) -> list[str]:
+    """Human result line(s) for a finished stage, derived from its findings."""
+    if stage_name == "nmap":
+        ports = [f for f in findings if f.stage == "nmap" and "port" in f.detail]
+        lines = [f"🛜 Открытых портов: {len(ports)}"]
+        for f in findings:
+            if f.stage != "fingerprint":
+                continue
+            verdict = f.detail.get("verdict", "unknown")
+            label = f.detail.get("label", "—")
+            if verdict == "router":
+                lines.append(f"🧭 Определено устройство: <b>{esc(label)}</b>")
+            elif verdict == "not_router":
+                lines.append(f"🚫 {esc(label)} — это не роутер")
+                lines.append("⏭️ Пропускаю проверки уязвимостей")
+            else:
+                lines.append(f"❔ Тип устройства: {esc(label)}")
+        return lines
+
+    if stage_name == "nuclei":
+        matches = [f for f in findings if "template_id" in f.detail]
+        if not matches:
+            return ["🧪 Уязвимостей не найдено"]
+        bd = _breakdown(matches)
+        return [f"🧪 Найдено совпадений: {len(matches)} ({_breakdown_str(bd)})"]
+
+    if stage_name == "routersploit":
+        creds = [f for f in findings if severity_rank(f.severity) >= severity_rank(Severity.HIGH)]
+        if creds:
+            return [f"🔑 <b>Найдены слабые/дефолтные креды: {len(creds)}</b>"]
+        return ["🔑 Дефолтные креды не найдены"]
+
+    return []
+
+
 def alert_text(job: ScanJob, finding: Finding, device_label: str) -> str:
     """Immediate push message for a high/critical finding on a (likely) router."""
     dev = f"\nУстройство: {esc(device_label)}" if device_label else ""

@@ -144,7 +144,10 @@ sudo journalctl -u pentest-bot -f
 - **🎯 Новый скан** — pick a target (button per scope host, ✏️ manual entry, or
   📄 a TXT list) → pick a profile (⚡ Быстрый / 🔍 Стандартный / 💣 Полный) →
   confirm → live progress → summary + buttons `[📄 JSON] [🔁 Повторить] [🏠 Меню]`.
-  - **Single target**: one message live-updates per stage, then shows the summary.
+  - **Single target**: one message grows into a live, human-readable narrative —
+    `⏳ В очереди → 🔍 Сканирую порты и определяю устройство → 🧭 Определено
+    устройство: MikroTik RouterOS → 🧪 Проверяю уязвимости → 🔑 …` — then is
+    replaced by the final summary. No new messages, no clutter.
   - **TXT batch**: send a `.txt` document with one target (IP or host) per line
     (commas/whitespace also split; `#` lines ignored; deduped; capped at 256).
     Each target is scope-checked and queued; one aggregate message tracks

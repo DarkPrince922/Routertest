@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import time
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -22,7 +21,15 @@ from engine.store import Store
 
 from .. import keyboards
 from ..callbacks import JobCB, MenuCB, ScanCB
-from ..render import PROFILE_RU, alert_text, batch_summary, summary
+from ..render import (
+    PROFILE_RU,
+    alert_text,
+    batch_summary,
+    esc,
+    stage_done_lines,
+    stage_start_line,
+    summary,
+)
 from ..states import ScanFlow
 from ..targets import MAX_TARGETS, parse_targets
 from ..utils import safe_edit, safe_edit_message
@@ -30,8 +37,6 @@ from ..utils import safe_edit, safe_edit_message
 log = logging.getLogger(__name__)
 router = Router(name="scan")
 
-# Minimum seconds between progress edits (Telegram rate-limit protection).
-PROGRESS_MIN_INTERVAL = 2.0
 # Reject uploads larger than this (bytes) before downloading the body.
 MAX_FILE_BYTES = 1_000_000
 
@@ -307,29 +312,67 @@ async def repeat_scan(query: CallbackQuery, callback_data: JobCB,
     await query.answer("Повтор поставлен в очередь")
 
 
+class _Narrative:
+    """Builds one growing, human-readable progress message for a single scan."""
+
+    def __init__(self, message: Message, target: str) -> None:
+        self._message = message
+        self._target = target
+        self._job_id: int | None = None
+        self._lines: list[str] = []        # finished step result lines
+        self._current: str | None = None   # the in-progress "doing…" line
+        self._lock = asyncio.Lock()
+
+    def _text(self) -> str:
+        head = f"🎯 <b>{esc(self._target)}</b>"
+        if self._job_id is not None:
+            head += f" · скан #{self._job_id}"
+        parts = [head, ""]
+        parts.extend(self._lines)
+        if self._current:
+            parts.append(self._current)
+        return "\n".join(parts)
+
+    def _kb(self):
+        return keyboards.scan_running(self._job_id) if self._job_id else None
+
+    async def queued(self, job_id: int, qsize: int) -> None:
+        async with self._lock:
+            self._job_id = job_id
+            self._current = (f"⏳ В очереди (позиция {qsize})…" if qsize
+                             else "⏳ Запускаю…")
+            await safe_edit_message(self._message, self._text(), self._kb())
+
+    async def on_progress(self, job: ScanJob, stage: str, idx: int, total: int) -> None:
+        async with self._lock:
+            self._job_id = job.id
+            self._current = stage_start_line(stage)
+            await safe_edit_message(self._message, self._text(), self._kb())
+
+    async def on_stage_done(self, job: ScanJob, stage: str,
+                            findings: list[Finding], idx: int, total: int) -> None:
+        async with self._lock:
+            self._current = None
+            self._lines.extend(stage_done_lines(stage, findings))
+            await safe_edit_message(self._message, self._text(), self._kb())
+
+
 async def _launch_single(message: Message, target: str, profile: ScanProfile,
                          actor_id: int | None, engine: Engine) -> None:
-    """Enqueue one scan with live per-stage progress + result summary."""
-    last_edit = {"t": 0.0}
-
-    async def on_progress(job: ScanJob, stage_name: str, idx: int, total: int) -> None:
-        now = time.monotonic()
-        if now - last_edit["t"] < PROGRESS_MIN_INTERVAL:
-            return
-        last_edit["t"] = now
-        await safe_edit_message(
-            message,
-            f"▶️ <b>{target}</b> · скан #{job.id}\n"
-            f"Этап {idx}/{total}: <b>{stage_name}</b>…",
-            keyboards.scan_running(job.id),
-        )
+    """Enqueue one scan with a live narrative + final result summary."""
+    narrative = _Narrative(message, target)
 
     async def on_done(job: ScanJob, findings: list[Finding]) -> None:
         await safe_edit_message(message, summary(job, findings),
                                 keyboards.result_actions(job.id))
 
-    job = engine.enqueue(target, profile, actor_id, on_progress=on_progress,
-                         on_done=on_done, on_alert=_make_alert(message))
+    job = engine.enqueue(
+        target, profile, actor_id,
+        on_progress=narrative.on_progress,
+        on_stage_done=narrative.on_stage_done,
+        on_done=on_done,
+        on_alert=_make_alert(message),
+    )
 
     if job.status.value == "REJECTED":
         await safe_edit_message(
@@ -340,12 +383,7 @@ async def _launch_single(message: Message, target: str, profile: ScanProfile,
         )
         return
 
-    await safe_edit_message(
-        message,
-        f"⏳ Скан #{job.id} для <code>{target}</code> поставлен в очередь "
-        f"(позиция в очереди: {engine.queue_size}).",
-        keyboards.scan_running(job.id),
-    )
+    await narrative.queued(job.id, engine.queue_size)
 
 
 @router.callback_query(JobCB.filter(F.action == "stop"))
