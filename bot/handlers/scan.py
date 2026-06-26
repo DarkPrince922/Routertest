@@ -14,6 +14,7 @@ from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from engine.discovery import subnet_host_count
 from engine.models import Finding, ScanJob, ScanProfile
 from engine.runner import Engine
 from engine.runtime import get_config
@@ -32,7 +33,7 @@ from ..render import (
     summary,
 )
 from ..states import ScanFlow
-from ..targets import MAX_TARGETS, parse_targets
+from ..targets import MAX_TARGETS, is_cidr, parse_targets
 from ..utils import safe_edit, safe_edit_message
 
 log = logging.getLogger(__name__)
@@ -56,14 +57,20 @@ def _make_alert(message: Message):
 
 
 def scope_targets(scope_gate: ScopeGate) -> list[str]:
-    """Explicit single-host targets offered as buttons (CIDRs use manual entry)."""
-    return sorted(scope_gate.config.allowed_hosts)
+    """Targets offered as buttons: named hosts + allowed CIDR subnets."""
+    hosts = sorted(scope_gate.config.allowed_hosts)
+    cidrs = [str(c) for c in scope_gate.config.allowed_cidrs]
+    return hosts + cidrs
 
 
 def _targets_label(targets: list[str]) -> str:
     """Human label for one or many targets, used on profile/confirm screens."""
     if len(targets) == 1:
-        return f"🎯 Цель: <code>{targets[0]}</code>"
+        t = targets[0]
+        if is_cidr(t):
+            n = subnet_host_count(t)
+            return f"🌐 Подсеть: <code>{t}</code> ({n} адресов)"
+        return f"🎯 Цель: <code>{t}</code>"
     preview = ", ".join(targets[:3])
     more = f" … (+{len(targets) - 3})" if len(targets) > 3 else ""
     return f"🎯 Целей: <b>{len(targets)}</b>\n<code>{preview}{more}</code>"
@@ -119,8 +126,11 @@ async def ask_manual(query: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ScanFlow.entering_manual)
     await safe_edit(
         query,
-        "✏️ Введите цель (IP или хост) одним сообщением.\n"
-        "Цель будет проверена по scope перед запуском.",
+        "✏️ Введите цель одним сообщением:\n"
+        "• IP или хост — <code>192.168.1.1</code>\n"
+        "• подсеть (CIDR) — <code>192.168.7.0/24</code> "
+        "(найду живые хосты и просканирую их)\n\n"
+        "Цель проверяется по scope перед запуском.",
         keyboards.back_to_menu(),
     )
     await query.answer()
@@ -131,11 +141,29 @@ async def receive_manual(message: Message, state: FSMContext,
                          scope_gate: ScopeGate) -> None:
     target = (message.text or "").strip()
     if not target:
-        await message.answer("Пустая цель. Введите IP или хост.")
+        await message.answer("Пустая цель. Введите IP, хост или подсеть (CIDR).")
+        return
+
+    actor_id = message.from_user.id if message.from_user else None
+
+    # A CIDR subnet → authorize the whole network now; live hosts are found and
+    # checked individually at launch.
+    if is_cidr(target):
+        decision = scope_gate.check_network(target, actor_id=actor_id)
+        if not decision.allowed:
+            await message.answer(
+                f"⛔ <b>REJECTED</b>: <code>{target}</code>\n"
+                f"Причина: {decision.reason}\n\nИнструменты не запускались.",
+                reply_markup=keyboards.back_to_menu(),
+            )
+            await state.clear()
+            return
+        await state.update_data(targets=[target])
+        sent = await message.answer("…")
+        await _show_profile_step_message(sent, state, [target])
         return
 
     # Pre-check scope so the user gets immediate feedback on a rejected target.
-    actor_id = message.from_user.id if message.from_user else None
     decision = scope_gate.check(target, actor_id=actor_id)
     if not decision.allowed:
         await message.answer(
@@ -281,7 +309,8 @@ async def _show_confirm(query: CallbackQuery, state: FSMContext) -> None:
 
 # ------------------------------------------------------------------ run / launch
 @router.callback_query(ScanCB.filter(F.step == "run"), ScanFlow.confirming)
-async def run_scan(query: CallbackQuery, state: FSMContext, engine: Engine) -> None:
+async def run_scan(query: CallbackQuery, state: FSMContext, engine: Engine,
+                   scope_gate: ScopeGate) -> None:
     data = await state.get_data()
     targets = data.get("targets") or []
     profile_raw = data.get("profile")
@@ -293,7 +322,10 @@ async def run_scan(query: CallbackQuery, state: FSMContext, engine: Engine) -> N
     profile = ScanProfile(profile_raw)
     actor_id = query.from_user.id if query.from_user else None
 
-    if len(targets) == 1:
+    if len(targets) == 1 and is_cidr(targets[0]):
+        await query.answer("Ищу живые хосты…")
+        await _launch_subnet(query.message, targets[0], profile, actor_id, engine, scope_gate)
+    elif len(targets) == 1:
         await _launch_single(query.message, targets[0], profile, actor_id, engine)
         await query.answer("Скан поставлен в очередь")
     else:
@@ -528,3 +560,46 @@ async def _launch_batch(message: Message, targets: list[str], profile: ScanProfi
     # Set the expected count last so completion is only declared once every
     # accepted job is queued (a fast job's on_done can fire mid-loop).
     await tracker.finalize(accepted, rejected)
+
+
+async def _launch_subnet(message: Message, cidr: str, profile: ScanProfile,
+                         actor_id: int | None, engine: Engine,
+                         scope_gate: ScopeGate) -> None:
+    """Discover live hosts in a subnet, then batch-scan the live ones."""
+    # Authorize the subnet (audited) before sending a single discovery packet.
+    decision = scope_gate.check_network(cidr, actor_id=actor_id)
+    if not decision.allowed:
+        await safe_edit_message(
+            message,
+            f"⛔ <b>REJECTED</b>: <code>{cidr}</code>\nПричина: {decision.reason}\n\n"
+            "Инструменты не запускались.",
+            keyboards.back_to_menu())
+        return
+
+    await safe_edit_message(
+        message, f"🔎 Ищу живые хосты в <code>{cidr}</code>…", None)
+
+    live, total, error = await engine.discover_hosts(cidr)
+    if error:
+        await safe_edit_message(
+            message, f"⚠️ Не удалось просканировать подсеть <code>{cidr}</code>: "
+            f"{error}", keyboards.back_to_menu())
+        return
+
+    dead = max(0, total - len(live))
+    if not live:
+        await safe_edit_message(
+            message,
+            f"🌐 <b>{cidr}</b>: живых хостов не найдено (проверено {total}).",
+            keyboards.back_to_menu())
+        return
+
+    if len(live) > MAX_TARGETS:
+        live = live[:MAX_TARGETS]
+
+    await safe_edit_message(
+        message,
+        f"🌐 <b>{cidr}</b>: живых {len(live)} из {total} (мёртвых {dead}). "
+        f"Ставлю в очередь…",
+        None)
+    await _launch_batch(message, live, profile, actor_id, engine)

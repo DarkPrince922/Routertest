@@ -152,9 +152,14 @@ sudo journalctl -u pentest-bot -f
 
 `/start` opens the main menu:
 
-- **🎯 Новый скан** — pick a target (button per scope host, ✏️ manual entry, or
-  📄 a TXT list) → pick a profile (⚡ Быстрый / 🔍 Стандартный / 💣 Полный) →
-  confirm → live progress → summary + buttons `[📄 JSON] [🔁 Повторить] [🏠 Меню]`.
+- **🎯 Новый скан** — pick a target (button per scope host **and CIDR**, ✏️ manual
+  entry, or 📄 a TXT list) → pick a profile (⚡ Быстрый / 🔍 Стандартный / 💣 Полный)
+  → confirm → live progress → summary + buttons `[📄 JSON] [🔁 Повторить] [🏠 Меню]`.
+  - **Subnet (CIDR)**: enter or pick a network like `192.168.7.0/24`. The bot
+    authorizes the whole subnet against scope, runs a **liveness sweep**
+    (`nmap -sn`) to find which hosts are up, reports `живых N из M (мёртвых K)`,
+    and then batch-scans only the live hosts (dead hosts are skipped). Capped at
+    a /20 for discovery and 256 live hosts for scanning.
   - **Single target**: one message grows into a live, human-readable narrative —
     `⏳ В очереди → 🔍 Сканирую порты и определяю устройство → 🧭 Определено
     устройство: MikroTik RouterOS → 🧪 Проверяю уязвимости → 🔑 …` — then is

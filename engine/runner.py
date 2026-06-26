@@ -24,6 +24,7 @@ from .models import (
     Severity,
     severity_rank,
 )
+from .discovery import discover_hosts
 from .runtime import get_config
 from .scope import ScopeGate
 from .stages import nmap_stage, nuclei_stage, routersploit_stage, snmp_stage
@@ -102,6 +103,10 @@ class Engine:
         for i in range(self._max_concurrent):
             self._workers.append(asyncio.create_task(self._worker(i), name=f"scan-worker-{i}"))
         log.info("engine started with %d workers", self._max_concurrent)
+
+    async def discover_hosts(self, cidr: str) -> tuple[list[str], int, str | None]:
+        """Ping-sweep a subnet → (live_hosts, total_hosts, error)."""
+        return await discover_hosts(cidr)
 
     def mark_interrupted(self) -> int:
         """At startup: flag scans left unfinished by the previous run.

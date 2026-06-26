@@ -53,6 +53,16 @@ class ScopeConfig:
                    allowed_hosts=hosts, allow_all=allow_all)
 
 
+def _subnet_of(net, allowed) -> bool:
+    """True if ``net`` is contained in ``allowed`` (same IP version only)."""
+    if net.version != allowed.version:
+        return False
+    try:
+        return net.subnet_of(allowed)
+    except (TypeError, ValueError):
+        return False
+
+
 def _resolve_ip(target: str) -> str | None:
     """Resolve a host/IP to a single IP string, or None on failure.
 
@@ -154,4 +164,36 @@ class ScopeGate:
             "ALLOWED" if decision.allowed else "REJECTED",
             decision.reason,
         )
+        return decision
+
+    def check_network(self, cidr: str, actor_id: int | None = None) -> ScopeDecision:
+        """Authorize a whole subnet before sweeping it (audited).
+
+        Allowed when ``allow_all`` is set or the CIDR is a subset of one of the
+        ``allowed_cidrs``.
+        """
+        cidr = cidr.strip()
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            decision = ScopeDecision(cidr, None, False, "некорректная подсеть")
+        else:
+            if self._config.allow_all:
+                decision = ScopeDecision(cidr, None, True,
+                                         "allow_all enabled (scope gate disabled)")
+            else:
+                allowed = any(_subnet_of(net, allowed_net)
+                              for allowed_net in self._config.allowed_cidrs)
+                reason = ("подсеть входит в allowed_cidrs" if allowed
+                          else "подсеть вне allowed_cidrs")
+                decision = ScopeDecision(cidr, None, allowed, reason)
+
+        self._store.add_audit(
+            actor_id=actor_id, action="scope_check_network", target=cidr,
+            resolved_ip=None,
+            decision="ALLOWED" if decision.allowed else "REJECTED",
+            engagement_id=self._config.engagement_id,
+        )
+        log.info("scope_check_network cidr=%s decision=%s reason=%s", cidr,
+                 "ALLOWED" if decision.allowed else "REJECTED", decision.reason)
         return decision

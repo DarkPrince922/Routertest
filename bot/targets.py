@@ -14,6 +14,17 @@ _HOSTNAME_RE = re.compile(
 )
 
 
+def is_cidr(token: str) -> bool:
+    """True if ``token`` is a CIDR subnet (has a prefix length, not a bare IP)."""
+    if "/" not in token:
+        return False
+    try:
+        ipaddress.ip_network(token, strict=False)
+        return True
+    except ValueError:
+        return False
+
+
 def _is_valid_target(token: str) -> bool:
     try:
         ipaddress.ip_address(token)
