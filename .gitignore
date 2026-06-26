@@ -1,0 +1,18 @@
+# Secrets & runtime state — never commit these.
+# NOTE: scope.yaml IS committed on purpose — it is the versionable, reviewable
+# source of truth for the rules of engagement (see TZ §2.2).
+.env
+scans.db
+scans.db-wal
+scans.db-shm
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Vendored routersploit (git-clone fallback)
+vendor/

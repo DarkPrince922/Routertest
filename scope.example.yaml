@@ -1,0 +1,16 @@
+# Rules of Engagement (ROE) — source of truth for authorized targets.
+#
+# This file is intentionally edited ONLY on the host (not from the bot). Changing
+# allowed targets requires editing this file and restarting the service:
+#     sudo systemctl restart pentest-bot
+#
+# A target is allowed if EITHER:
+#   - its resolved IP falls inside one of allowed_cidrs, OR
+#   - the literal host string is listed in allowed_hosts.
+engagement_id: "lab-2026-01"
+
+allowed_cidrs:
+  - 192.168.1.0/24
+
+allowed_hosts:
+  - myrouter.local
