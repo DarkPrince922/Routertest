@@ -23,12 +23,13 @@ def _is_valid_target(token: str) -> bool:
     return bool(_HOSTNAME_RE.match(token))
 
 
-def parse_targets(text: str) -> tuple[list[str], int]:
+def parse_targets(text: str) -> tuple[list[str], int, int]:
     """Extract a de-duplicated, validated target list from ``text``.
 
     Splits on newlines/commas/whitespace, ignores blank lines and ``#`` comments.
-    Returns ``(targets, skipped)`` where ``skipped`` counts tokens that did not
-    look like an IP or hostname. The list is truncated to :data:`MAX_TARGETS`.
+    Returns ``(targets, skipped, truncated)`` where ``skipped`` counts tokens that
+    did not look like an IP or hostname, and ``truncated`` counts valid targets
+    dropped because the list exceeded :data:`MAX_TARGETS`.
     """
     seen: set[str] = set()
     targets: list[str] = []
@@ -51,4 +52,5 @@ def parse_targets(text: str) -> tuple[list[str], int]:
             seen.add(key)
             targets.append(token)
 
-    return targets[:MAX_TARGETS], skipped
+    truncated = max(0, len(targets) - MAX_TARGETS)
+    return targets[:MAX_TARGETS], skipped, truncated

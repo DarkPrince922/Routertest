@@ -170,7 +170,7 @@ async def receive_file(message: Message, state: FSMContext, bot: Bot) -> None:
         await message.answer("Не удалось прочитать файл как текст.")
         return
 
-    targets, skipped = parse_targets(text)
+    targets, skipped, truncated = parse_targets(text)
     if not targets:
         await message.answer(
             "В файле не найдено валидных целей (IP или хостов). "
@@ -181,7 +181,13 @@ async def receive_file(message: Message, state: FSMContext, bot: Bot) -> None:
         return
 
     await state.update_data(targets=targets)
-    note = f"\n<i>Пропущено невалидных: {skipped}</i>" if skipped else ""
+    notes = []
+    if skipped:
+        notes.append(f"пропущено невалидных: {skipped}")
+    if truncated:
+        notes.append(f"⚠️ превышен лимит {MAX_TARGETS}: отброшено {truncated} "
+                     f"(будут просканированы только первые {MAX_TARGETS})")
+    note = ("\n<i>" + "; ".join(notes) + "</i>") if notes else ""
     sent = await message.answer(
         f"📄 Загружено целей: <b>{len(targets)}</b>{note}")
     await _show_profile_step_message(sent, state, targets)
