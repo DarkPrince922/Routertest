@@ -39,3 +39,9 @@ class PageCB(CallbackData, prefix="page"):
     scope: str
     page: int
     ref: int = 0
+
+
+class SettingsCB(CallbackData, prefix="cfg"):
+    """Settings actions. action ∈ show/proxy_set/proxy_clear/rsf_toggle/resume."""
+
+    action: str

@@ -18,8 +18,9 @@ class JobStatus(str, enum.Enum):
     DONE = "DONE"
     REJECTED = "REJECTED"
     ERROR = "ERROR"
-    CANCELLED = "CANCELLED"  # stopped by the user mid-scan
-    SKIPPED = "SKIPPED"      # target is not a router — deeper stages skipped
+    CANCELLED = "CANCELLED"      # stopped by the user mid-scan
+    SKIPPED = "SKIPPED"          # target is not a router — deeper stages skipped
+    INTERRUPTED = "INTERRUPTED"  # left unfinished by a restart; resume on demand
 
 
 class ScanProfile(str, enum.Enum):

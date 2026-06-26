@@ -33,3 +33,12 @@ def configure(config: EngineConfig) -> None:
 
 def get_config() -> EngineConfig:
     return _config
+
+
+def set_proxy(proxy: str | None) -> None:
+    """Update the outbound proxy live (used by the in-bot settings screen)."""
+    _config.proxy = proxy or None
+
+
+def set_rsf_default_only(enabled: bool) -> None:
+    _config.rsf_default_only = enabled

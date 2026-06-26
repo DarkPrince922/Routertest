@@ -19,6 +19,7 @@ from engine.scope import ScopeConfig, ScopeGate
 from engine.store import Store
 
 from .handlers import history, menu, scan, scope
+from .handlers import settings as settings_handlers
 from .middlewares import AdminGuardMiddleware, AntiFloodMiddleware
 
 log = logging.getLogger(__name__)
@@ -56,9 +57,14 @@ async def main() -> None:
     engine = Engine(store, scope_gate, max_concurrent=settings.max_concurrent)
 
     # Engine runtime config (proxy, routersploit mode) for the stages.
+    # In-bot settings (DB) take precedence over .env defaults so they persist
+    # across restarts.
+    db_proxy = store.get_setting("scan_proxy", settings.scan_proxy or "")
+    db_rsf = store.get_setting("rsf_default_only")
+    rsf_default_only = (db_rsf == "true") if db_rsf is not None else settings.rsf_default_only
     configure(EngineConfig(
-        proxy=settings.scan_proxy or None,
-        rsf_default_only=settings.rsf_default_only,
+        proxy=(db_proxy or None),
+        rsf_default_only=rsf_default_only,
     ))
 
     bot = Bot(
@@ -83,21 +89,17 @@ async def main() -> None:
     dp.include_router(scan.router)
     dp.include_router(history.router)
     dp.include_router(scope.router)
+    dp.include_router(settings_handlers.router)
 
     engine.start()
     log.info("starting bot (engagement=%s, max_concurrent=%d)",
              scope_config.engagement_id, settings.max_concurrent)
 
-    # Re-queue scans interrupted by a previous restart and tell the admins.
-    recovered = engine.recover()
-    if recovered:
-        note = (f"♻️ После перезапуска возобновлено сканов: {len(recovered)}. "
-                "Результаты появятся в «📊 История».")
-        for admin_id in settings.admin_ids:
-            try:
-                await bot.send_message(admin_id, note)
-            except Exception:  # noqa: BLE001 - admin may not have opened the bot
-                log.debug("could not notify admin %s about recovery", admin_id)
+    # Flag scans interrupted by the previous run; the user resumes them on
+    # demand from ⚙️ Настройки (nothing runs automatically).
+    interrupted = engine.mark_interrupted()
+    if interrupted:
+        log.info("%d interrupted scan(s) await manual resume", interrupted)
 
     try:
         await dp.start_polling(bot)

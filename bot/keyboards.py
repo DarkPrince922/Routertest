@@ -8,7 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from engine.models import ScanJob, ScanProfile
 
-from .callbacks import JobCB, MenuCB, PageCB, ScanCB
+from .callbacks import JobCB, MenuCB, PageCB, ScanCB, SettingsCB
 
 HISTORY_PAGE_SIZE = 5
 FINDINGS_PAGE_SIZE = 5
@@ -26,7 +26,27 @@ def main_menu() -> InlineKeyboardMarkup:
     kb.button(text="📊 История", callback_data=MenuCB(action="history"))
     kb.button(text="📋 Scope", callback_data=MenuCB(action="scope"))
     kb.button(text="ℹ️ Статус", callback_data=MenuCB(action="status"))
-    kb.adjust(1, 2, 1)
+    kb.button(text="⚙️ Настройки", callback_data=MenuCB(action="settings"))
+    kb.adjust(1, 2, 1, 1)
+    return kb.as_markup()
+
+
+def settings_menu(proxy: str | None, rsf_default_only: bool,
+                  interrupted: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=("🔌 Прокси: задать" if not proxy else "🔌 Прокси: изменить"),
+              callback_data=SettingsCB(action="proxy_set"))
+    if proxy:
+        kb.button(text="❌ Убрать прокси", callback_data=SettingsCB(action="proxy_clear"))
+    kb.button(
+        text=("🔑 Креды: только дефолтные" if rsf_default_only
+              else "🔑 Креды: + bruteforce"),
+        callback_data=SettingsCB(action="rsf_toggle"))
+    if interrupted:
+        kb.button(text=f"♻️ Возобновить прерванные ({interrupted})",
+                  callback_data=SettingsCB(action="resume"))
+    kb.button(text="🏠 Меню", callback_data=MenuCB(action="main"))
+    kb.adjust(1)
     return kb.as_markup()
 
 
@@ -160,4 +180,5 @@ def _status_marker(status: str) -> str:
         "ERROR": "⚠️",
         "CANCELLED": "⏹️",
         "SKIPPED": "⏭️",
+        "INTERRUPTED": "⛔",
     }.get(status, "•")

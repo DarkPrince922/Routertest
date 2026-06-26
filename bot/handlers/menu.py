@@ -39,11 +39,15 @@ async def show_main(query: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(MenuCB.filter(F.action == "status"))
 async def show_status(query: CallbackQuery, engine: Engine, store: Store) -> None:
     versions = await tool_versions()
+    interrupted = store.count_interrupted()
+    interrupted_line = (f"♻️ Прервано (для возобновления — ⚙️ Настройки): {interrupted}\n"
+                        if interrupted else "")
     text = (
         "ℹ️ <b>Статус</b>\n\n"
         f"Очередь: {engine.queue_size}\n"
         f"Активных сканов: {engine.running_count} / {engine.max_concurrent}\n"
-        f"Всего job в БД: {store.count_jobs()}\n\n"
+        f"Всего job в БД: {store.count_jobs()}\n"
+        f"{interrupted_line}\n"
         "<b>Версии инструментов:</b>\n"
         f"  • nmap: {versions['nmap']}\n"
         f"  • nuclei: {versions['nuclei']}\n"

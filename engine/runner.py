@@ -102,23 +102,29 @@ class Engine:
             self._workers.append(asyncio.create_task(self._worker(i), name=f"scan-worker-{i}"))
         log.info("engine started with %d workers", self._max_concurrent)
 
-    def recover(self) -> list[ScanJob]:
-        """Re-queue jobs left QUEUED/RUNNING by a previous run (e.g. a restart).
+    def mark_interrupted(self) -> int:
+        """At startup: flag scans left unfinished by the previous run.
 
-        Partial findings are dropped and the scans run fresh, without live UI
-        callbacks (results land in history). Returns the recovered jobs.
+        Nothing runs automatically — the user resumes them on demand via the bot.
         """
-        jobs = self._store.list_unfinished()
+        n = self._store.mark_unfinished_interrupted()
+        if n:
+            log.info("flagged %d interrupted job(s) from a previous run", n)
+        return n
+
+    def resume_interrupted(self) -> list[ScanJob]:
+        """Re-queue all INTERRUPTED jobs (fresh run, no live UI callbacks)."""
+        jobs = self._store.list_interrupted()
         for job in jobs:
-            self._store.reset_job_for_retry(job.id)
+            self._store.reset_job_for_retry(job.id)  # -> QUEUED, drops partials
             fresh = self._store.get_job(job.id)
             if fresh is None:
                 continue
-            self._store.add_audit("job_recovered", target=fresh.target,
+            self._store.add_audit("job_resumed", target=fresh.target,
                                   decision="QUEUED", engagement_id=fresh.engagement_id)
             self._queue.put_nowait(_QueueItem(fresh, None, None, None, None))
         if jobs:
-            log.info("recovered %d interrupted job(s)", len(jobs))
+            log.info("resumed %d interrupted job(s)", len(jobs))
         return jobs
 
     async def stop(self) -> None:

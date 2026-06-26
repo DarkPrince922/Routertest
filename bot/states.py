@@ -12,3 +12,9 @@ class ScanFlow(StatesGroup):
     entering_file = State()
     choosing_profile = State()
     confirming = State()
+
+
+class SettingsFlow(StatesGroup):
+    """States for the settings screen."""
+
+    entering_proxy = State()

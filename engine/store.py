@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS audit (
     decision      TEXT,
     engagement_id TEXT
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -147,14 +152,54 @@ class Store:
             row = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         return _row_to_job(row) if row else None
 
-    def list_unfinished(self) -> list[ScanJob]:
-        """Jobs left QUEUED/RUNNING (e.g. by a service restart), for recovery."""
+    def mark_unfinished_interrupted(self) -> int:
+        """At startup, flag jobs left QUEUED/RUNNING as INTERRUPTED (no auto-run).
+
+        Returns how many were flagged. The user resumes them on demand.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE jobs SET status=? WHERE status IN (?, ?)",
+                (JobStatus.INTERRUPTED.value, JobStatus.QUEUED.value,
+                 JobStatus.RUNNING.value),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def list_interrupted(self) -> list[ScanJob]:
+        """Jobs flagged INTERRUPTED, awaiting a manual resume."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM jobs WHERE status IN (?, ?) ORDER BY id ASC",
-                (JobStatus.QUEUED.value, JobStatus.RUNNING.value),
+                "SELECT * FROM jobs WHERE status=? ORDER BY id ASC",
+                (JobStatus.INTERRUPTED.value,),
             ).fetchall()
         return [_row_to_job(r) for r in rows]
+
+    def count_interrupted(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM jobs WHERE status=?",
+                (JobStatus.INTERRUPTED.value,),
+            ).fetchone()
+        return int(row["c"])
+
+    # ---------------------------------------------------------------- settings
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row is not None else default
+
+    def set_setting(self, key: str, value: str | None) -> None:
+        with self._lock:
+            if value is None:
+                self._conn.execute("DELETE FROM settings WHERE key=?", (key,))
+            else:
+                self._conn.execute(
+                    "INSERT INTO settings(key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value))
+            self._conn.commit()
 
     def reset_job_for_retry(self, job_id: int) -> None:
         """Drop any partial findings and put the job back to QUEUED."""

@@ -110,7 +110,9 @@ RSF_DEFAULT_ONLY=true           # true = only factory-default creds (fast, low l
 
 - **`SCAN_PROXY`** — routes nuclei and the HTTP banner grab through a proxy
   (SOCKS5/HTTP). nmap is **not** proxied; for full tunnelling run the service on
-  a VPN/jump host.
+  a VPN/jump host. This is just the initial default — you can also set/change the
+  proxy live from the bot under **⚙️ Настройки → 🔌 Прокси** (persisted in the DB,
+  takes precedence over `.env`).
 - **`RSF_DEFAULT_ONLY`** — `true` runs only routersploit's `*_default` credential
   modules (a handful of factory creds — fast, unlikely to trip a router lockout).
   Set `false` to also run the slower `*_bruteforce` modules.
@@ -182,7 +184,10 @@ sudo journalctl -u pentest-bot -f
 - **📊 История** — paginated list of past scans; open one to see the severity
   breakdown, paginated findings, and a JSON export.
 - **📋 Scope** — read-only view of `engagement_id`, CIDRs and hosts.
-- **ℹ️ Статус** — queue depth, active scans, tool versions.
+- **ℹ️ Статус** — queue depth, active scans, tool versions, interrupted count.
+- **⚙️ Настройки** — set/clear the SOCKS5/HTTP proxy, toggle the routersploit
+  creds mode (default-only ↔ +bruteforce), and resume interrupted scans. Proxy
+  and creds mode are persisted in the DB.
 
 ### Scan profiles
 
@@ -257,8 +262,9 @@ loaded at startup and matched against every target's banners/OS/firmware.
 - Progress edits are throttled (~once per 2s) and `MessageNotModified` /
   `TelegramRetryAfter` are handled.
 - History survives restarts (SQLite on disk; WAL mode). Scans left QUEUED/RUNNING
-  by a restart are **re-queued automatically** on startup (partial results
-  dropped, run fresh); the admins get a one-line notice.
+  by a restart are flagged **`INTERRUPTED`** on startup — nothing runs
+  automatically. Resume them on demand from **⚙️ Настройки → ♻️ Возобновить**
+  (partial results are dropped and the scans run fresh).
 - The systemd unit grants `CAP_NET_RAW`/`CAP_NET_ADMIN` so the unprivileged
   service user can run nmap raw-socket scans.
 
