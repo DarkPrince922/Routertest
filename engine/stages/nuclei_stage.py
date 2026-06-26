@@ -5,6 +5,7 @@ import json
 import logging
 
 from ..models import Finding, normalize_severity
+from ..runtime import get_config
 from ._common import ToolNotFound, run_cmd
 
 log = logging.getLogger(__name__)
@@ -19,6 +20,9 @@ async def nuclei_stage(target: str) -> list[Finding]:
         "nuclei", "-u", target, "-jsonl", "-silent",
         "-tags", NUCLEI_TAGS,
     ]
+    proxy = get_config().proxy
+    if proxy:
+        cmd += ["-proxy", proxy]
     try:
         rc, stdout, stderr = await run_cmd(cmd, timeout=NUCLEI_TIMEOUT)
     except ToolNotFound:

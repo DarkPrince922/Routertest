@@ -25,7 +25,7 @@ from .models import (
     severity_rank,
 )
 from .scope import ScopeGate
-from .stages import nmap_stage, nuclei_stage, routersploit_stage
+from .stages import nmap_stage, nuclei_stage, routersploit_stage, snmp_stage
 from .stages.nmap_stage import router_verdict
 from .store import Store
 
@@ -48,9 +48,14 @@ ALERT_THRESHOLD = severity_rank(Severity.HIGH)
 # Stages per profile (order matters).
 PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
     ScanProfile.QUICK: [("nmap", nmap_stage)],
-    ScanProfile.STANDARD: [("nmap", nmap_stage), ("nuclei", nuclei_stage)],
+    ScanProfile.STANDARD: [
+        ("nmap", nmap_stage),
+        ("snmp", snmp_stage),
+        ("nuclei", nuclei_stage),
+    ],
     ScanProfile.FULL: [
         ("nmap", nmap_stage),
+        ("snmp", snmp_stage),
         ("nuclei", nuclei_stage),
         ("routersploit", routersploit_stage),
     ],
@@ -96,6 +101,25 @@ class Engine:
         for i in range(self._max_concurrent):
             self._workers.append(asyncio.create_task(self._worker(i), name=f"scan-worker-{i}"))
         log.info("engine started with %d workers", self._max_concurrent)
+
+    def recover(self) -> list[ScanJob]:
+        """Re-queue jobs left QUEUED/RUNNING by a previous run (e.g. a restart).
+
+        Partial findings are dropped and the scans run fresh, without live UI
+        callbacks (results land in history). Returns the recovered jobs.
+        """
+        jobs = self._store.list_unfinished()
+        for job in jobs:
+            self._store.reset_job_for_retry(job.id)
+            fresh = self._store.get_job(job.id)
+            if fresh is None:
+                continue
+            self._store.add_audit("job_recovered", target=fresh.target,
+                                  decision="QUEUED", engagement_id=fresh.engagement_id)
+            self._queue.put_nowait(_QueueItem(fresh, None, None, None, None))
+        if jobs:
+            log.info("recovered %d interrupted job(s)", len(jobs))
+        return jobs
 
     async def stop(self) -> None:
         for task in self._workers:

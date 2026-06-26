@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import get_settings
 from engine.runner import Engine
+from engine.runtime import EngineConfig, configure
 from engine.scope import ScopeConfig, ScopeGate
 from engine.store import Store
 
@@ -54,6 +55,12 @@ async def main() -> None:
     scope_gate = ScopeGate(scope_config, store)
     engine = Engine(store, scope_gate, max_concurrent=settings.max_concurrent)
 
+    # Engine runtime config (proxy, routersploit mode) for the stages.
+    configure(EngineConfig(
+        proxy=settings.scan_proxy or None,
+        rsf_default_only=settings.rsf_default_only,
+    ))
+
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -80,6 +87,18 @@ async def main() -> None:
     engine.start()
     log.info("starting bot (engagement=%s, max_concurrent=%d)",
              scope_config.engagement_id, settings.max_concurrent)
+
+    # Re-queue scans interrupted by a previous restart and tell the admins.
+    recovered = engine.recover()
+    if recovered:
+        note = (f"♻️ После перезапуска возобновлено сканов: {len(recovered)}. "
+                "Результаты появятся в «📊 История».")
+        for admin_id in settings.admin_ids:
+            try:
+                await bot.send_message(admin_id, note)
+            except Exception:  # noqa: BLE001 - admin may not have opened the bot
+                log.debug("could not notify admin %s about recovery", admin_id)
+
     try:
         await dp.start_polling(bot)
     finally:

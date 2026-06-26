@@ -1,0 +1,59 @@
+# Curated knowledge base of well-known router/CPE vulnerabilities, matched
+# against the detected fingerprint (vendor / product / version / banners).
+#
+# This is intentionally a small, transparent, offline list — NOT a full NVD feed.
+# nuclei still provides broad CVE coverage; this adds high-signal, version-aware
+# hits for famous router bugs. Extend it freely: each entry is
+#   - match:    case-insensitive regex tested against the fingerprint blob
+#     cve:      identifier
+#     severity: info|low|medium|high|critical
+#     title:    short human description
+#     reference: URL
+cves:
+  - match: "routeros|mikrotik|rosssh"
+    cve: "CVE-2018-14847"
+    severity: high
+    title: "MikroTik RouterOS Winbox path traversal — unauth credential disclosure (RouterOS < 6.42)"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2018-14847"
+
+  - match: "rompager"
+    cve: "CVE-2014-9222"
+    severity: critical
+    title: "RomPager 'Misfortune Cookie' — remote admin takeover (RomPager < 4.34)"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2014-9222"
+
+  - match: "goahead"
+    cve: "CVE-2017-17562"
+    severity: critical
+    title: "GoAhead web server RCE via LD_PRELOAD (CGI)"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2017-17562"
+
+  - match: "huawei.*hg532|hg532"
+    cve: "CVE-2017-17215"
+    severity: critical
+    title: "Huawei HG532 TR-069 remote code execution"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2017-17215"
+
+  - match: "dropbear[_ ]?(0\\.|201[0-5])"
+    cve: "CVE-2016-7406"
+    severity: high
+    title: "Dropbear SSH format-string / older-version vulnerabilities (< 2016.74)"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2016-7406"
+
+  - match: "dir-?6[0-9]{2}|dlink|d-link"
+    cve: "CVE-2019-16920"
+    severity: critical
+    title: "D-Link DIR routers unauthenticated remote code execution"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2019-16920"
+
+  - match: "tp-?link|tplink"
+    cve: "CVE-2017-13772"
+    severity: high
+    title: "TP-Link WR940N remote code execution"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2017-13772"
+
+  - match: "netgear"
+    cve: "CVE-2016-6277"
+    severity: critical
+    title: "NETGEAR R-series unauthenticated command injection"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2016-6277"

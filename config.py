@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     db_path: Path = Path("./scans.db")
     log_level: str = "INFO"
     scope_path: Path = Path("./scope.yaml")
+    # HTTP-layer proxy for nuclei + banner grabbing (nmap is not proxied).
+    scan_proxy: str = ""
+    # routersploit: only run *_default credential modules (skip *_bruteforce).
+    rsf_default_only: bool = True
 
     @field_validator("admin_ids", mode="before")
     @classmethod

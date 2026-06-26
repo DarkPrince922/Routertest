@@ -7,10 +7,14 @@ deeper router-oriented stages on a non-router target.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from xml.etree import ElementTree as ET
 
+from ..cve_db import match_fingerprint
 from ..models import Finding, Severity
+from ..runtime import get_config
+from ._banners import grab_banners
 from ._common import ToolNotFound, run_cmd
 
 log = logging.getLogger(__name__)
@@ -76,20 +80,45 @@ async def nmap_stage(target: str) -> list[Finding]:
                         {"returncode": rc, "stderr": stderr[:500]})]
 
     try:
-        return _parse_nmap_xml(stdout)
+        port_findings, products, services, os_info, open_ports = _parse_nmap_xml(stdout)
     except ET.ParseError as exc:
         return [Finding("nmap", Severity.INFO, "nmap XML parse error",
                         {"error": str(exc)})]
+
+    # Active banner enrichment (HTTP Server/title, SSH/Telnet) to sharpen the
+    # model/firmware fingerprint. Best-effort and proxied if configured.
+    banners: dict = {}
+    if open_ports:
+        try:
+            banners = await asyncio.to_thread(
+                grab_banners, target, open_ports, get_config().proxy)
+        except Exception:  # noqa: BLE001
+            banners = {}
+
+    findings: list[Finding] = list(port_findings)
+    findings.append(_fingerprint_finding(products, services, os_info, banners))
+    # Version-aware CVE hits from the curated KB against the whole fingerprint.
+    findings.extend(match_fingerprint(_blob(products, services, os_info, banners)))
+
+    if not findings:
+        findings.append(Finding("nmap", Severity.INFO, "no open ports found", {}))
+    return findings
 
 
 def _needs_privileges(stderr: str) -> bool:
     return "requires root privileges" in stderr.lower() or "requires r" in stderr.lower()
 
 
-def _parse_nmap_xml(xml_text: str) -> list[Finding]:
-    findings: list[Finding] = []
+def _parse_nmap_xml(xml_text: str):
+    """Parse nmap XML.
+
+    Returns ``(port_findings, products, services, os_info, open_ports)``.
+    """
+    port_findings: list[Finding] = []
     products: list[str] = []
     services: list[str] = []
+    open_ports: list[int] = []
+    os_info: dict = {}
     root = ET.fromstring(xml_text)
 
     for host in root.findall("host"):
@@ -109,23 +138,25 @@ def _parse_nmap_xml(xml_text: str) -> list[Finding]:
                 services.append(service)
                 if product:
                     products.append(product)
+                try:
+                    open_ports.append(int(portid))
+                except ValueError:
+                    pass
 
                 label = f"{portid}/{proto} open: {service}"
                 if product:
                     label += f" ({product} {version})".rstrip()
-                findings.append(Finding(
+                port_findings.append(Finding(
                     stage="nmap", severity=Severity.INFO, title=label,
                     detail={"port": portid, "protocol": proto, "service": service,
                             "product": product, "version": version},
                 ))
 
-        os_info = _parse_os(host)
-        # Build the device-type fingerprint finding for this host.
-        findings.append(_fingerprint_finding(products, services, os_info))
+        parsed = _parse_os(host)
+        if parsed:
+            os_info = parsed
 
-    if not findings:
-        findings.append(Finding("nmap", Severity.INFO, "no open ports found", {}))
-    return findings
+    return port_findings, products, services, os_info, open_ports
 
 
 def _parse_os(host: ET.Element) -> dict:
@@ -156,14 +187,30 @@ def _parse_os(host: ET.Element) -> dict:
     return best
 
 
-def _fingerprint_finding(products: list[str], services: list[str], os_info: dict) -> Finding:
-    verdict, label, confidence = _classify(products, services, os_info)
+def _blob(products: list[str], services: list[str], os_info: dict, banners: dict) -> str:
+    """Combined lowercase fingerprint text used for classification + CVE match."""
+    return " ".join(products + services + [
+        os_info.get("vendor", ""), os_info.get("osfamily", ""),
+        os_info.get("os_name", ""),
+        banners.get("http_server", ""), banners.get("http_title", ""),
+        banners.get("ssh_banner", ""), banners.get("telnet_banner", ""),
+    ]).lower()
+
+
+def _firmware(os_info: dict, banners: dict) -> str:
+    """Best-effort firmware/version string for display (from banners or OS)."""
+    return (banners.get("http_server") or banners.get("ssh_banner")
+            or os_info.get("os_name") or "")
+
+
+def _fingerprint_finding(products: list[str], services: list[str], os_info: dict,
+                         banners: dict) -> Finding:
+    verdict, label, confidence = _classify(products, services, os_info, banners)
     icon = {"router": "🧭", "not_router": "🚫", "unknown": "❔"}[verdict]
-    title = f"Тип устройства: {label}"
     return Finding(
         stage="fingerprint",
         severity=Severity.INFO,
-        title=f"{icon} {title}",
+        title=f"{icon} Тип устройства: {label}",
         detail={
             "verdict": verdict,
             "label": label,
@@ -173,38 +220,46 @@ def _fingerprint_finding(products: list[str], services: list[str], os_info: dict
             "osfamily": os_info.get("osfamily", ""),
             "os_name": os_info.get("os_name", ""),
             "accuracy": os_info.get("accuracy", 0),
+            "firmware": _firmware(os_info, banners),
+            "http_server": banners.get("http_server", ""),
+            "http_title": banners.get("http_title", ""),
+            "ssh_banner": banners.get("ssh_banner", ""),
+            "telnet_banner": banners.get("telnet_banner", ""),
         },
     )
 
 
-def _classify(products: list[str], services: list[str], os_info: dict) -> tuple[str, str, str]:
+def _classify(products: list[str], services: list[str], os_info: dict,
+              banners: dict) -> tuple[str, str, str]:
     """Return (verdict, human_label, confidence).
 
     verdict ∈ {"router", "not_router", "unknown"}.
     """
-    blob = " ".join(products + services + [
-        os_info.get("vendor", ""), os_info.get("osfamily", ""),
-        os_info.get("os_name", ""),
-    ]).lower()
+    blob = _blob(products, services, os_info, banners)
+    # Prefer a concrete name from banners (model/title) over the nmap OS guess.
+    best_name = (banners.get("http_title") or os_info.get("os_name")
+                 or banners.get("http_server") or os_info.get("vendor"))
 
     # 1) Strong signal: known router vendor/product in banners or OS name.
     matched_kw = next((kw for kw in ROUTER_KEYWORDS if kw in blob), None)
     if matched_kw:
-        name = os_info.get("os_name") or os_info.get("vendor") or matched_kw
+        name = best_name or matched_kw
         return "router", f"роутер ({name})", "высокая"
 
     # 2) nmap device type.
     dtype = os_info.get("device_type", "")
     acc = os_info.get("accuracy", 0)
     if dtype:
-        name = os_info.get("os_name") or dtype
+        name = best_name or dtype
         if dtype in ROUTER_TYPES:
             return "router", f"роутер ({name}, {acc}%)", "средняя"
         if dtype in NON_ROUTER_TYPES:
             return "not_router", f"не роутер ({name}, {acc}%)", "средняя"
         return "unknown", f"неопределённо ({name}, {acc}%)", "низкая"
 
-    # 3) No OS data at all.
+    # 3) Banner-only signal (no OS data) — at least show what we saw.
+    if best_name:
+        return "unknown", f"неопределённо ({best_name})", "низкая"
     return "unknown", "не удалось определить", "нет данных"
 
 

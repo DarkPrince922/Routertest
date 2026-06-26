@@ -147,6 +147,25 @@ class Store:
             row = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         return _row_to_job(row) if row else None
 
+    def list_unfinished(self) -> list[ScanJob]:
+        """Jobs left QUEUED/RUNNING (e.g. by a service restart), for recovery."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE status IN (?, ?) ORDER BY id ASC",
+                (JobStatus.QUEUED.value, JobStatus.RUNNING.value),
+            ).fetchall()
+        return [_row_to_job(r) for r in rows]
+
+    def reset_job_for_retry(self, job_id: int) -> None:
+        """Drop any partial findings and put the job back to QUEUED."""
+        with self._lock:
+            self._conn.execute("DELETE FROM findings WHERE job_id=?", (job_id,))
+            self._conn.execute(
+                "UPDATE jobs SET status=?, error=NULL, finished_at=NULL WHERE id=?",
+                (JobStatus.QUEUED.value, job_id),
+            )
+            self._conn.commit()
+
     def list_jobs(self, limit: int, offset: int) -> list[ScanJob]:
         with self._lock:
             rows = self._conn.execute(

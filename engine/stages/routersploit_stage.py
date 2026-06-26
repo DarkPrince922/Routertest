@@ -17,6 +17,7 @@ import logging
 import socket
 
 from ..models import Finding, Severity
+from ..runtime import get_config
 
 log = logging.getLogger(__name__)
 
@@ -50,9 +51,17 @@ async def routersploit_stage(target: str) -> list[Finding]:
         return [Finding("routersploit", Severity.INFO,
                         "no common router service ports open for rsf", {})]
 
+    # "Default-only" mode runs just the *_default modules (a handful of factory
+    # creds) and skips the slower *_bruteforce ones — faster and far less likely
+    # to trip a router's lockout / ban your IP.
+    default_only = get_config().rsf_default_only
+
     findings: list[Finding] = []
     for port in open_ports:
-        for module_path in PORT_PROBES[port]:
+        modules = PORT_PROBES[port]
+        if default_only:
+            modules = [m for m in modules if "bruteforce" not in m]
+        for module_path in modules:
             try:
                 creds, raw = await asyncio.wait_for(
                     asyncio.to_thread(_run_module, module_path, target, port),

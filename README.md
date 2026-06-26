@@ -101,10 +101,19 @@ sudo bash update.sh            # optional: sudo bash update.sh <branch> (default
 ```
 BOT_TOKEN=<token from @BotFather>
 ADMIN_IDS=123456789,987654321   # comma-separated Telegram user IDs
-MAX_CONCURRENT=2
+MAX_CONCURRENT=6
 DB_PATH=./scans.db
 LOG_LEVEL=INFO
+SCAN_PROXY=                     # optional HTTP-layer proxy, e.g. socks5://127.0.0.1:9050
+RSF_DEFAULT_ONLY=true           # true = only factory-default creds (fast, low lockout risk)
 ```
+
+- **`SCAN_PROXY`** — routes nuclei and the HTTP banner grab through a proxy
+  (SOCKS5/HTTP). nmap is **not** proxied; for full tunnelling run the service on
+  a VPN/jump host.
+- **`RSF_DEFAULT_ONLY`** — `true` runs only routersploit's `*_default` credential
+  modules (a handful of factory creds — fast, unlikely to trip a router lockout).
+  Set `false` to also run the slower `*_bruteforce` modules.
 
 `scope.yaml` — the **rules of engagement**, the source of truth for what may be
 scanned. Edited on the host and reviewed in version control; it is **never**
@@ -179,9 +188,17 @@ sudo journalctl -u pentest-bot -f
 
 | Profile | Stages |
 |---|---|
-| `QUICK` | nmap |
-| `STANDARD` | nmap + nuclei |
-| `FULL` | nmap + nuclei + routersploit |
+| `QUICK` | nmap (ports + device fingerprint) |
+| `STANDARD` | nmap + snmp + nuclei |
+| `FULL` | nmap + snmp + nuclei + routersploit |
+
+The **nmap** stage also grabs HTTP `Server`/`<title>` and SSH/Telnet banners to
+sharpen the model/firmware fingerprint, and matches the detected firmware against
+a curated offline CVE list (`engine/data/router_cves.yaml`) for well-known router
+bugs (MikroTik Winbox, RomPager "Misfortune Cookie", Huawei HG532, etc.). The
+**snmp** stage checks default community strings (`public`/`private`/…) on UDP 161
+— a readable community is a high-severity finding and also feeds CVE matching.
+Both feed the immediate 🚨 vulnerable-router alert.
 | `FIRMWARE` | *reserved* (binwalk/EMBA) — not implemented in v1 |
 
 ## Security model
@@ -229,13 +246,19 @@ A failing stage is isolated: it is recorded as an `info` Finding and the scan
 continues. The `FIRMWARE` profile and `engagement_id` plumbing are already in
 place for the future binwalk/EMBA branch.
 
+To add a **known-CVE rule**, append an entry to `engine/data/router_cves.yaml`
+(`match` is a case-insensitive regex tested against the fingerprint blob). It is
+loaded at startup and matched against every target's banners/OS/firmware.
+
 ## Operational notes
 
 - Nothing blocks the event loop: all subprocesses are async; routersploit
   (synchronous) runs in `asyncio.to_thread` with a per-module timeout.
 - Progress edits are throttled (~once per 2s) and `MessageNotModified` /
   `TelegramRetryAfter` are handled.
-- History survives restarts (SQLite on disk; WAL mode).
+- History survives restarts (SQLite on disk; WAL mode). Scans left QUEUED/RUNNING
+  by a restart are **re-queued automatically** on startup (partial results
+  dropped, run fresh); the admins get a one-line notice.
 - The systemd unit grants `CAP_NET_RAW`/`CAP_NET_ADMIN` so the unprivileged
   service user can run nmap raw-socket scans.
 
