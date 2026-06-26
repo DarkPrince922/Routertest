@@ -73,6 +73,27 @@ git clone --depth 1 --branch v3.4.0 https://github.com/threat9/routersploit vend
 ./.venv/bin/pip install -e vendor/routersploit
 ```
 
+## Update
+
+To pull the latest code and restart the service:
+
+```bash
+cd /opt/pentest_orchestrator   # your install dir
+sudo bash update.sh            # optional: sudo bash update.sh <branch> (default main)
+```
+
+`update.sh` is idempotent and:
+
+- stashes local edits to tracked files (e.g. your `scope.yaml`) and re-applies
+  them after the pull, so your ROE is never overwritten;
+- fast-forward pulls `origin/main` (aborts cleanly if it can't, restarting
+  nothing);
+- reinstalls Python deps only if `requirements.txt` changed, and warns if the
+  systemd unit/installer changed (re-run `install.sh` then);
+- restores ownership to `pentestbot`, restarts the service and prints status.
+
+`.env`, `scans.db` and `logs/` are untracked, so they are left alone.
+
 ## Configure
 
 `.env` (created from `.env.example`):
