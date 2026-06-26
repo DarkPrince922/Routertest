@@ -24,6 +24,7 @@ from .models import (
     Severity,
     severity_rank,
 )
+from .runtime import get_config
 from .scope import ScopeGate
 from .stages import nmap_stage, nuclei_stage, routersploit_stage, snmp_stage
 from .stages.nmap_stage import router_verdict
@@ -268,10 +269,15 @@ class Engine:
                 # Router gate: after nmap decide whether to keep going.
                 if name == "nmap":
                     verdict, device_label = router_verdict(findings)
-                    if verdict == "not_router" and idx < total:
+                    skip_unknown = get_config().skip_unknown
+                    should_skip = (verdict == "not_router"
+                                   or (verdict == "unknown" and skip_unknown))
+                    if should_skip and idx < total:
+                        reason = ("Тип устройства не определён — дальнейшие стадии пропущены"
+                                  if verdict == "unknown"
+                                  else "Цель не похожа на роутер — дальнейшие стадии пропущены")
                         self._store.add_findings(job.id, [Finding(
-                            "fingerprint", Severity.INFO,
-                            "Цель не похожа на роутер — дальнейшие стадии пропущены",
+                            "fingerprint", Severity.INFO, reason,
                             {"verdict": verdict, "label": device_label})])
                         final_status = JobStatus.SKIPPED
                         break

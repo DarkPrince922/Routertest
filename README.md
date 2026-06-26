@@ -176,8 +176,9 @@ sudo journalctl -u pentest-bot -f
     (`-sV -O`) and classifies the target as router / not-router / unknown
     (vendor banners + nmap `osclass`). If the target is **confidently not a
     router**, the deeper stages (nuclei/routersploit) are skipped and the job is
-    marked `SKIPPED`. Unknown targets are still scanned (OS detection often
-    fails through `-Pn`), so a real router isn't dropped on a weak signal.
+    marked `SKIPPED`. Targets whose type can't be determined are, by default,
+    still scanned (OS detection often fails through `-Pn`); switch to strict mode
+    (**⚙️ Настройки → 🧭 Неизвестные: пропускать**) to skip undetermined targets too.
   - **🚨 Vulnerable-router alert**: as soon as a stage produces a `high`/
     `critical` finding, the bot pushes a separate notification message
     (target + device + finding), without waiting for the whole scan to finish.
@@ -186,8 +187,9 @@ sudo journalctl -u pentest-bot -f
 - **📋 Scope** — read-only view of `engagement_id`, CIDRs and hosts.
 - **ℹ️ Статус** — queue depth, active scans, tool versions, interrupted count.
 - **⚙️ Настройки** — set/clear the SOCKS5/HTTP proxy, toggle the routersploit
-  creds mode (default-only ↔ +bruteforce), and **resume or clear** interrupted
-  scans. Proxy and creds mode are persisted in the DB.
+  creds mode (default-only ↔ +bruteforce), toggle skip-unknown (strict ↔ lenient
+  device detection), and **resume or clear** interrupted scans. Proxy and the
+  toggles are persisted in the DB.
 
 ### Scan profiles
 

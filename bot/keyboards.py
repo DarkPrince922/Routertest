@@ -32,7 +32,7 @@ def main_menu() -> InlineKeyboardMarkup:
 
 
 def settings_menu(proxy: str | None, rsf_default_only: bool,
-                  interrupted: int) -> InlineKeyboardMarkup:
+                  interrupted: int, skip_unknown: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=("🔌 Прокси: задать" if not proxy else "🔌 Прокси: изменить"),
               callback_data=SettingsCB(action="proxy_set"))
@@ -42,6 +42,10 @@ def settings_menu(proxy: str | None, rsf_default_only: bool,
         text=("🔑 Креды: только дефолтные" if rsf_default_only
               else "🔑 Креды: + bruteforce"),
         callback_data=SettingsCB(action="rsf_toggle"))
+    kb.button(
+        text=("🧭 Неизвестные: пропускать" if skip_unknown
+              else "🧭 Неизвестные: сканировать"),
+        callback_data=SettingsCB(action="skip_toggle"))
     if interrupted:
         kb.button(text=f"♻️ Возобновить прерванные ({interrupted})",
                   callback_data=SettingsCB(action="resume"))

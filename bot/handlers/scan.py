@@ -16,6 +16,7 @@ from aiogram.types import CallbackQuery, Message
 
 from engine.models import Finding, ScanJob, ScanProfile
 from engine.runner import Engine
+from engine.runtime import get_config
 from engine.scope import ScopeGate
 from engine.store import Store
 
@@ -444,6 +445,10 @@ class _BatchTracker:
                                                 or fp.detail.get("vendor") or "роутер")
                     elif verdict == "not_router":
                         self._active[job.id] = f"<code>{esc(job.target)}</code> — 🚫 не роутер, пропускаю"
+                        await self._render()
+                        return
+                    elif verdict == "unknown" and get_config().skip_unknown:
+                        self._active[job.id] = f"<code>{esc(job.target)}</code> — ❔ тип не определён, пропускаю"
                         await self._render()
                         return
             await self._render()

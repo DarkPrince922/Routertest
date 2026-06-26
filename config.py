@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     scan_proxy: str = ""
     # routersploit: only run *_default credential modules (skip *_bruteforce).
     rsf_default_only: bool = True
+    # Also skip deep stages when the device type can't be determined (unknown).
+    skip_unknown: bool = False
 
     @field_validator("admin_ids", mode="before")
     @classmethod

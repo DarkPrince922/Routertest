@@ -31,15 +31,18 @@ def _view_text(store: Store) -> str:
     cfg = runtime.get_config()
     proxy = cfg.proxy or "—"
     rsf = "только дефолтные креды" if cfg.rsf_default_only else "дефолтные + bruteforce"
+    unknown = ("пропускать (строгий)" if cfg.skip_unknown
+               else "сканировать (мягкий)")
     interrupted = store.count_interrupted()
     lines = [
         "⚙️ <b>Настройки</b>",
         "",
         f"🔌 Прокси: <code>{esc(proxy)}</code>",
         f"🔑 routersploit: {esc(rsf)}",
+        f"🧭 Неизвестные устройства: {esc(unknown)}",
     ]
     if interrupted:
-        lines.append(f"♻️ Прерванных сканов: <b>{interrupted}</b> (можно возобновить)")
+        lines.append(f"♻️ Прерванных сканов: <b>{interrupted}</b>")
     return "\n".join(lines)
 
 
@@ -47,7 +50,8 @@ async def _show(query: CallbackQuery, store: Store) -> None:
     cfg = runtime.get_config()
     await safe_edit(query, _view_text(store),
                     keyboards.settings_menu(cfg.proxy, cfg.rsf_default_only,
-                                            store.count_interrupted()))
+                                            store.count_interrupted(),
+                                            cfg.skip_unknown))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -82,11 +86,12 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
     store.set_setting("scan_proxy", value)
     runtime.set_proxy(value)
     await state.clear()
+    cfg = runtime.get_config()
     sent = await message.answer(f"✅ Прокси установлен: <code>{esc(value)}</code>")
     await safe_edit_message(
         sent, _view_text(store),
-        keyboards.settings_menu(value, runtime.get_config().rsf_default_only,
-                                store.count_interrupted()))
+        keyboards.settings_menu(value, cfg.rsf_default_only,
+                                store.count_interrupted(), cfg.skip_unknown))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -105,6 +110,16 @@ async def toggle_rsf(query: CallbackQuery, store: Store) -> None:
     store.set_setting("rsf_default_only", "true" if new_value else "false")
     await _show(query, store)
     await query.answer("Только дефолтные" if new_value else "Включён bruteforce")
+
+
+@router.callback_query(SettingsCB.filter(F.action == "skip_toggle"))
+async def toggle_skip_unknown(query: CallbackQuery, store: Store) -> None:
+    new_value = not runtime.get_config().skip_unknown
+    runtime.set_skip_unknown(new_value)
+    store.set_setting("skip_unknown", "true" if new_value else "false")
+    await _show(query, store)
+    await query.answer("Неизвестные пропускаются" if new_value
+                       else "Неизвестные сканируются")
 
 
 # ---------------------------------------------------------- resume interrupted

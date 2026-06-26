@@ -66,7 +66,12 @@ def summary(job: ScanJob, findings: list[Finding]) -> str:
     if dline:
         lines.append(dline)
     if job.status.value == "SKIPPED":
-        lines.append("⏭️ Цель не похожа на роутер — глубокие стадии пропущены.")
+        verdict = next((f.detail.get("verdict") for f in findings
+                        if f.stage == "fingerprint"), None)
+        if verdict == "unknown":
+            lines.append("⏭️ Тип устройства не определён — глубокие стадии пропущены.")
+        else:
+            lines.append("⏭️ Цель не похожа на роутер — глубокие стадии пропущены.")
     elif job.status.value == "CANCELLED":
         lines.append("⏹️ Скан остановлен пользователем.")
     lines.append(f"Находок: {len(findings)} ({_breakdown_str(breakdown)})")
@@ -111,6 +116,9 @@ def stage_done_lines(stage_name: str, findings: list[Finding]) -> list[str]:
                 lines.append("⏭️ Пропускаю проверки уязвимостей")
             else:
                 lines.append(f"❔ Тип устройства: {esc(label)}")
+                from engine.runtime import get_config
+                if get_config().skip_unknown:
+                    lines.append("⏭️ Тип не определён — пропускаю проверки")
         return lines
 
     if stage_name == "nuclei":
