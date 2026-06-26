@@ -36,16 +36,40 @@ def short_id(job: ScanJob) -> str:
     return f"{job.id:x}"
 
 
+STATUS_ICON = {
+    "DONE": "✅",
+    "SKIPPED": "⏭️",
+    "CANCELLED": "⏹️",
+    "ERROR": "⚠️",
+    "REJECTED": "⛔",
+}
+
+
+def device_line(findings: list[Finding]) -> str | None:
+    """Return the device-type line from the fingerprint finding, if any."""
+    for f in findings:
+        if f.stage == "fingerprint":
+            return f"🧭 {esc(f.detail.get('label', '—'))}"
+    return None
+
+
 def summary(job: ScanJob, findings: list[Finding]) -> str:
     """The scan result summary block."""
     breakdown = _breakdown(findings)
-    icon = "✅" if job.status.value == "DONE" else "⚠️"
+    icon = STATUS_ICON.get(job.status.value, "⚠️")
     profile = PROFILE_RU.get(job.profile.value, job.profile.value)
 
     lines = [
         f"{icon} <b>{esc(job.target)}</b> [{short_id(job)}] · профиль: {esc(profile)}",
-        f"Находок: {len(findings)} ({_breakdown_str(breakdown)})",
     ]
+    dline = device_line(findings)
+    if dline:
+        lines.append(dline)
+    if job.status.value == "SKIPPED":
+        lines.append("⏭️ Цель не похожа на роутер — глубокие стадии пропущены.")
+    elif job.status.value == "CANCELLED":
+        lines.append("⏹️ Скан остановлен пользователем.")
+    lines.append(f"Находок: {len(findings)} ({_breakdown_str(breakdown)})")
     if job.error:
         lines.append(f"⚠️ Ошибка: {esc(job.error)}")
 
@@ -56,6 +80,17 @@ def summary(job: ScanJob, findings: list[Finding]) -> str:
             continue
         lines.append(f"[{f.severity.value}] {esc(f.stage)}: {esc(f.title)}")
     return "\n".join(lines)
+
+
+def alert_text(job: ScanJob, finding: Finding, device_label: str) -> str:
+    """Immediate push message for a high/critical finding on a (likely) router."""
+    dev = f"\nУстройство: {esc(device_label)}" if device_label else ""
+    return (
+        "🚨 <b>УЯЗВИМЫЙ РОУТЕР</b>\n"
+        f"Цель: <code>{esc(job.target)}</code>{dev}\n"
+        f"[{finding.severity.value}] {esc(finding.stage)}: {esc(finding.title)}\n"
+        f"Скан #{job.id}"
+    )
 
 
 def batch_summary(profile: ScanProfile,

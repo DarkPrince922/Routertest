@@ -150,6 +150,18 @@ sudo journalctl -u pentest-bot -f
     Each target is scope-checked and queued; one aggregate message tracks
     `Готово k/N` and ends with a combined summary (notable findings + scope
     rejections). Per-target details and JSON live under **📊 История**.
+  - **⏹️ Стоп**: the live progress message (single scan) and the batch message
+    carry a stop button. Stopping a running scan cancels the current stage and
+    marks the job `CANCELLED`; the batch button stops every job in that batch.
+  - **Device fingerprint & skip**: the nmap stage runs OS/device detection
+    (`-sV -O`) and classifies the target as router / not-router / unknown
+    (vendor banners + nmap `osclass`). If the target is **confidently not a
+    router**, the deeper stages (nuclei/routersploit) are skipped and the job is
+    marked `SKIPPED`. Unknown targets are still scanned (OS detection often
+    fails through `-Pn`), so a real router isn't dropped on a weak signal.
+  - **🚨 Vulnerable-router alert**: as soon as a stage produces a `high`/
+    `critical` finding, the bot pushes a separate notification message
+    (target + device + finding), without waiting for the whole scan to finish.
 - **📊 История** — paginated list of past scans; open one to see the severity
   breakdown, paginated findings, and a JSON export.
 - **📋 Scope** — read-only view of `engagement_id`, CIDRs and hosts.

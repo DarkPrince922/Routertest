@@ -90,6 +90,20 @@ def result_actions(job_id: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def scan_running(job_id: int) -> InlineKeyboardMarkup:
+    """Stop button shown on the live progress message of a single scan."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⏹️ Стоп", callback_data=JobCB(action="stop", job_id=job_id))
+    return kb.as_markup()
+
+
+def batch_running(batch_key: int) -> InlineKeyboardMarkup:
+    """Stop-all button shown on a running batch's aggregate message."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⏹️ Остановить все", callback_data=JobCB(action="stopbatch", job_id=batch_key))
+    return kb.as_markup()
+
+
 def history_list(jobs: list[ScanJob], page: int, total: int) -> InlineKeyboardMarkup:
     """List of jobs with pagination controls."""
     kb = InlineKeyboardBuilder()
@@ -144,4 +158,6 @@ def _status_marker(status: str) -> str:
         "QUEUED": "⏳",
         "REJECTED": "⛔",
         "ERROR": "⚠️",
+        "CANCELLED": "⏹️",
+        "SKIPPED": "⏭️",
     }.get(status, "•")

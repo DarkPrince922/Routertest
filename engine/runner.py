@@ -2,7 +2,13 @@
 
 The bot enqueues a job and returns immediately; a pool of ``MAX_CONCURRENT``
 workers pulls jobs off an ``asyncio.Queue`` and runs their stages. Progress is
-reported back through an async callback so the chat message can live-update.
+reported back through async callbacks so the chat message can live-update.
+
+Extra behaviours layered on the basic pipeline:
+  * after nmap, the device-type verdict decides whether to skip the deeper
+    router-oriented stages on a non-router target (status ``SKIPPED``);
+  * a scan can be cancelled mid-flight (``request_cancel`` → status ``CANCELLED``);
+  * high/critical findings trigger an immediate ``on_alert`` callback.
 """
 from __future__ import annotations
 
@@ -16,9 +22,11 @@ from .models import (
     ScanJob,
     ScanProfile,
     Severity,
+    severity_rank,
 )
 from .scope import ScopeGate
 from .stages import nmap_stage, nuclei_stage, routersploit_stage
+from .stages.nmap_stage import router_verdict
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -29,6 +37,11 @@ Stage = Callable[[str], Awaitable[list[Finding]]]
 ProgressCB = Callable[[ScanJob, str, int, int], Awaitable[None]]
 # Completion callback: (job, findings) -> awaitable.
 DoneCB = Callable[[ScanJob, list[Finding]], Awaitable[None]]
+# Alert callback for a high/critical finding: (job, finding, device_label).
+AlertCB = Callable[[ScanJob, Finding, str], Awaitable[None]]
+
+# Findings at or above this severity raise an immediate alert.
+ALERT_THRESHOLD = severity_rank(Severity.HIGH)
 
 # Stages per profile (order matters).
 PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
@@ -45,13 +58,14 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
 
 
 class _QueueItem:
-    __slots__ = ("job", "on_progress", "on_done")
+    __slots__ = ("job", "on_progress", "on_done", "on_alert")
 
     def __init__(self, job: ScanJob, on_progress: ProgressCB | None,
-                 on_done: DoneCB | None) -> None:
+                 on_done: DoneCB | None, on_alert: AlertCB | None) -> None:
         self.job = job
         self.on_progress = on_progress
         self.on_done = on_done
+        self.on_alert = on_alert
 
 
 class Engine:
@@ -65,6 +79,9 @@ class Engine:
         self._workers: list[asyncio.Task] = []
         self._running_count = 0
         self._started = False
+        # Cancellation bookkeeping.
+        self._cancel_requested: set[int] = set()
+        self._running_stage: dict[int, asyncio.Task] = {}
 
     # ------------------------------------------------------------- lifecycle
     def start(self) -> None:
@@ -88,7 +105,8 @@ class Engine:
     # --------------------------------------------------------------- enqueue
     def enqueue(self, target: str, profile: ScanProfile, actor_id: int | None,
                 on_progress: ProgressCB | None = None,
-                on_done: DoneCB | None = None) -> ScanJob:
+                on_done: DoneCB | None = None,
+                on_alert: AlertCB | None = None) -> ScanJob:
         """Scope-check, create the job and enqueue it (or reject).
 
         Returns the created :class:`ScanJob`. A rejected target is persisted with
@@ -118,8 +136,21 @@ class Engine:
         self._store.add_audit("job_queued", actor_id=actor_id, target=target,
                               resolved_ip=decision.resolved_ip, decision="QUEUED",
                               engagement_id=engagement_id)
-        self._queue.put_nowait(_QueueItem(job, on_progress, on_done))
+        self._queue.put_nowait(_QueueItem(job, on_progress, on_done, on_alert))
         return job
+
+    # ------------------------------------------------------------ cancellation
+    def request_cancel(self, job_id: int) -> bool:
+        """Ask a queued/running job to stop. Returns False if it's already done."""
+        job = self._store.get_job(job_id)
+        if job is None or job.status not in (JobStatus.QUEUED, JobStatus.RUNNING):
+            return False
+        self._cancel_requested.add(job_id)
+        task = self._running_stage.get(job_id)
+        if task is not None and not task.done():
+            task.cancel()
+        log.info("cancel requested for job %d", job_id)
+        return True
 
     # ---------------------------------------------------------------- status
     @property
@@ -152,6 +183,16 @@ class Engine:
         stages = PROFILE_STAGES.get(job.profile, [])
         total = len(stages)
 
+        # Cancelled while still queued — never start any tool.
+        if job.id in self._cancel_requested:
+            self._cancel_requested.discard(job.id)
+            self._store.add_findings(job.id, [
+                Finding("control", Severity.INFO, "Scan cancelled before start", {})])
+            self._finish(job, JobStatus.CANCELLED)
+            if item.on_done is not None:
+                await _safe(item.on_done(job, self._store.get_findings(job.id)))
+            return
+
         self._store.update_status(job.id, JobStatus.RUNNING)
         job.status = JobStatus.RUNNING
         self._store.add_audit("job_started", target=job.target,
@@ -159,36 +200,91 @@ class Engine:
         log.info("job %d started target=%s profile=%s", job.id, job.target, job.profile.value)
 
         all_findings: list[Finding] = []
+        device_label = ""
+        final_status = JobStatus.DONE
         try:
             for idx, (name, stage) in enumerate(stages, start=1):
+                if job.id in self._cancel_requested:
+                    final_status = JobStatus.CANCELLED
+                    break
                 if item.on_progress is not None:
                     await _safe(item.on_progress(job, name, idx, total))
-                findings = await self._run_stage(name, stage, job.target)
+
+                findings = await self._run_stage(name, stage, job.target, job.id)
                 self._store.add_findings(job.id, findings)
                 all_findings.extend(findings)
 
-            self._store.update_status(job.id, JobStatus.DONE, finished=True)
-            job.status = JobStatus.DONE
-            log.info("job %d done: %d findings", job.id, len(all_findings))
+                # Immediate alert for high/critical findings.
+                if item.on_alert is not None:
+                    for f in findings:
+                        if severity_rank(f.severity) >= ALERT_THRESHOLD:
+                            await _safe(item.on_alert(job, f, device_label))
+
+                # Router gate: after nmap decide whether to keep going.
+                if name == "nmap":
+                    verdict, device_label = router_verdict(findings)
+                    if verdict == "not_router" and idx < total:
+                        self._store.add_findings(job.id, [Finding(
+                            "fingerprint", Severity.INFO,
+                            "Цель не похожа на роутер — дальнейшие стадии пропущены",
+                            {"verdict": verdict, "label": device_label})])
+                        final_status = JobStatus.SKIPPED
+                        break
+            else:
+                final_status = JobStatus.DONE
+
+            if final_status == JobStatus.CANCELLED:
+                self._store.add_findings(job.id, [
+                    Finding("control", Severity.INFO, "Scan cancelled by user", {})])
+
+        except asyncio.CancelledError:
+            final_status = JobStatus.CANCELLED
+            self._store.add_findings(job.id, [
+                Finding("control", Severity.INFO, "Scan cancelled by user", {})])
+            log.info("job %d cancelled mid-stage", job.id)
         except Exception as exc:  # noqa: BLE001
             self._store.update_status(job.id, JobStatus.ERROR, error=str(exc), finished=True)
             job.status = JobStatus.ERROR
             job.error = str(exc)
             log.exception("job %d errored", job.id)
+            self._cancel_requested.discard(job.id)
+            self._store.add_audit("job_finished", target=job.target,
+                                  decision=job.status.value, engagement_id=job.engagement_id)
+            if item.on_done is not None:
+                await _safe(item.on_done(job, all_findings))
+            return
 
-        self._store.add_audit("job_finished", target=job.target,
-                              decision=job.status.value, engagement_id=job.engagement_id)
+        self._finish(job, final_status)
+        log.info("job %d %s: %d findings", job.id, final_status.value, len(all_findings))
         if item.on_done is not None:
             await _safe(item.on_done(job, all_findings))
 
-    async def _run_stage(self, name: str, stage: Stage, target: str) -> list[Finding]:
-        """Run one stage; a failing stage yields an info Finding, never raises."""
+    def _finish(self, job: ScanJob, status: JobStatus) -> None:
+        self._cancel_requested.discard(job.id)
+        self._store.update_status(job.id, status, finished=True)
+        job.status = status
+        self._store.add_audit("job_finished", target=job.target,
+                              decision=status.value, engagement_id=job.engagement_id)
+
+    async def _run_stage(self, name: str, stage: Stage, target: str,
+                         job_id: int) -> list[Finding]:
+        """Run one stage as a cancellable task.
+
+        A failing stage yields an info Finding (never aborts the scan); a cancelled
+        stage re-raises ``CancelledError`` so the job is marked CANCELLED.
+        """
+        task: asyncio.Task = asyncio.ensure_future(stage(target))
+        self._running_stage[job_id] = task
         try:
-            return await stage(target)
+            return await task
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 - one stage must not abort the scan
             log.exception("stage %s failed", name)
             return [Finding(name, Severity.INFO, f"stage {name} failed",
                             {"error": str(exc)})]
+        finally:
+            self._running_stage.pop(job_id, None)
 
 
 async def _safe(awaitable: Awaitable[None]) -> None:
@@ -196,7 +292,7 @@ async def _safe(awaitable: Awaitable[None]) -> None:
     try:
         await awaitable
     except Exception:  # noqa: BLE001
-        log.exception("progress/done callback failed")
+        log.exception("progress/done/alert callback failed")
 
 
 class _suppress_cancel:

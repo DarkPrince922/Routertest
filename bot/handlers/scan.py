@@ -22,7 +22,7 @@ from engine.store import Store
 
 from .. import keyboards
 from ..callbacks import JobCB, MenuCB, ScanCB
-from ..render import PROFILE_RU, batch_summary, summary
+from ..render import PROFILE_RU, alert_text, batch_summary, summary
 from ..states import ScanFlow
 from ..targets import MAX_TARGETS, parse_targets
 from ..utils import safe_edit, safe_edit_message
@@ -34,6 +34,19 @@ router = Router(name="scan")
 PROGRESS_MIN_INTERVAL = 2.0
 # Reject uploads larger than this (bytes) before downloading the body.
 MAX_FILE_BYTES = 1_000_000
+
+# batch_key (aggregate message id) -> list of that batch's job ids, for stop-all.
+_BATCHES: dict[int, list[int]] = {}
+
+
+def _make_alert(message: Message):
+    """Build an on_alert callback that pushes a notification into the chat."""
+    async def on_alert(job: ScanJob, finding: Finding, device_label: str) -> None:
+        try:
+            await message.answer(alert_text(job, finding, device_label))
+        except Exception:  # noqa: BLE001 - a failed alert must not break the scan
+            log.debug("alert send failed", exc_info=True)
+    return on_alert
 
 
 def scope_targets(scope_gate: ScopeGate) -> list[str]:
@@ -308,15 +321,15 @@ async def _launch_single(message: Message, target: str, profile: ScanProfile,
             message,
             f"▶️ <b>{target}</b> · скан #{job.id}\n"
             f"Этап {idx}/{total}: <b>{stage_name}</b>…",
-            None,
+            keyboards.scan_running(job.id),
         )
 
     async def on_done(job: ScanJob, findings: list[Finding]) -> None:
         await safe_edit_message(message, summary(job, findings),
                                 keyboards.result_actions(job.id))
 
-    job = engine.enqueue(target, profile, actor_id,
-                         on_progress=on_progress, on_done=on_done)
+    job = engine.enqueue(target, profile, actor_id, on_progress=on_progress,
+                         on_done=on_done, on_alert=_make_alert(message))
 
     if job.status.value == "REJECTED":
         await safe_edit_message(
@@ -331,20 +344,38 @@ async def _launch_single(message: Message, target: str, profile: ScanProfile,
         message,
         f"⏳ Скан #{job.id} для <code>{target}</code> поставлен в очередь "
         f"(позиция в очереди: {engine.queue_size}).",
-        None,
+        keyboards.scan_running(job.id),
     )
+
+
+@router.callback_query(JobCB.filter(F.action == "stop"))
+async def stop_scan(query: CallbackQuery, callback_data: JobCB, engine: Engine) -> None:
+    ok = engine.request_cancel(callback_data.job_id)
+    await query.answer("⏹️ Останавливаю скан…" if ok else "Скан уже завершён.",
+                       show_alert=not ok)
+
+
+@router.callback_query(JobCB.filter(F.action == "stopbatch"))
+async def stop_batch(query: CallbackQuery, callback_data: JobCB, engine: Engine) -> None:
+    job_ids = list(_BATCHES.get(callback_data.job_id, []))
+    cancelled = sum(1 for jid in job_ids if engine.request_cancel(jid))
+    await query.answer(
+        f"⏹️ Останавливаю: {cancelled}" if cancelled else "Активных сканов нет.",
+        show_alert=not cancelled)
 
 
 class _BatchTracker:
     """Aggregates many jobs into one live-updating summary message."""
 
-    def __init__(self, message: Message, profile: ScanProfile) -> None:
+    def __init__(self, message: Message, profile: ScanProfile, batch_key: int) -> None:
         self._message = message
         self._profile = profile
+        self._batch_key = batch_key
         self._lock = asyncio.Lock()
         self._results: list[tuple[ScanJob, list[Finding]]] = []
         self._rejected: list[tuple[str, str]] = []
         self._total: int | None = None  # accepted count, set on finalize
+        self.job_ids: list[int] = []     # shared with _BATCHES for stop-all
 
     async def on_done(self, job: ScanJob, findings: list[Finding]) -> None:
         async with self._lock:
@@ -366,9 +397,10 @@ class _BatchTracker:
                 self._message,
                 f"📋 <b>Пакетный скан</b> · профиль: {PROFILE_RU.get(self._profile.value, self._profile.value)}\n"
                 f"Готово: {done}/{total}…",
-                None,
+                keyboards.batch_running(self._batch_key),
             )
         else:
+            _BATCHES.pop(self._batch_key, None)
             await safe_edit_message(
                 self._message,
                 batch_summary(self._profile, self._results, self._rejected),
@@ -379,22 +411,27 @@ class _BatchTracker:
 async def _launch_batch(message: Message, targets: list[str], profile: ScanProfile,
                         actor_id: int | None, engine: Engine) -> None:
     """Enqueue many scans; one aggregate message tracks completion."""
-    tracker = _BatchTracker(message, profile)
+    batch_key = message.message_id
+    tracker = _BatchTracker(message, profile, batch_key)
+    _BATCHES[batch_key] = tracker.job_ids  # same list object — fills as we enqueue
+    alert = _make_alert(message)
     rejected: list[tuple[str, str]] = []
     accepted = 0
 
     await safe_edit_message(
         message,
         f"📋 Ставлю в очередь {len(targets)} целей…",
-        None,
+        keyboards.batch_running(batch_key),
     )
 
     for target in targets:
-        job = engine.enqueue(target, profile, actor_id, on_done=tracker.on_done)
+        job = engine.enqueue(target, profile, actor_id,
+                             on_done=tracker.on_done, on_alert=alert)
         if job.status.value == "REJECTED":
             rejected.append((target, job.error or "вне scope"))
         else:
             accepted += 1
+            tracker.job_ids.append(job.id)
 
     # Set the expected count last so completion is only declared once every
     # accepted job is queued (a fast job's on_done can fire mid-loop).
