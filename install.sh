@@ -70,8 +70,8 @@ else
   trap - EXIT
   ok "nuclei installed to /usr/local/bin/nuclei"
 fi
-log "Updating nuclei templates (non-fatal)"
-nuclei -update-templates >/dev/null 2>&1 || warn "nuclei -update-templates failed; continuing."
+# Templates are updated later (step 8) AS the service user, so they land in that
+# user's $HOME where the bot will read them — not in root's home.
 
 # --------------------------------------------------------------------------- 5. routersploit
 log "Installing routersploit into venv"
@@ -110,15 +110,28 @@ if grep -q "PUT_YOUR_TOKEN_HERE" "$APP_DIR/.env"; then
 fi
 
 # --------------------------------------------------------------------------- 8. service user
+SERVICE_HOME="/home/${SERVICE_USER}"
 log "Ensuring service user '$SERVICE_USER'"
 if id "$SERVICE_USER" >/dev/null 2>&1; then
   ok "User $SERVICE_USER already exists"
 else
-  $SUDO useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+  # Give the user a home dir: nuclei needs a writable $HOME for its config dir
+  # and templates ($HOME/.config/nuclei). Without it nuclei fails at runtime.
+  $SUDO useradd --system --create-home --home-dir "$SERVICE_HOME" \
+    --shell /usr/sbin/nologin "$SERVICE_USER"
   ok "Created system user $SERVICE_USER"
 fi
+# Ensure the home exists and is writable even on re-runs / pre-existing users.
+$SUDO mkdir -p "$SERVICE_HOME"
+$SUDO chown -R "$SERVICE_USER":"$SERVICE_USER" "$SERVICE_HOME"
 log "Setting ownership of $APP_DIR"
 $SUDO chown -R "$SERVICE_USER":"$SERVICE_USER" "$APP_DIR"
+
+# Update nuclei templates AS the service user so they land in its $HOME (the
+# bot runs as $SERVICE_USER and reads templates from there, not from root's home).
+log "Updating nuclei templates for $SERVICE_USER (non-fatal)"
+$SUDO -u "$SERVICE_USER" env HOME="$SERVICE_HOME" nuclei -update-templates >/dev/null 2>&1 \
+  || warn "nuclei -update-templates failed; continuing (run it later as $SERVICE_USER)."
 
 # --------------------------------------------------------------------------- 9. systemd unit
 log "Installing systemd unit"

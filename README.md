@@ -197,4 +197,21 @@ place for the future binwalk/EMBA branch.
 - History survives restarts (SQLite on disk; WAL mode).
 - The systemd unit grants `CAP_NET_RAW`/`CAP_NET_ADMIN` so the unprivileged
   service user can run nmap raw-socket scans.
+
+## Troubleshooting
+
+- **`systemctl status` shows `200/CHDIR`** — the project lives somewhere the
+  service user (`pentestbot`) can't enter, typically under `/root`. Move it to
+  `/opt/pentest_orchestrator` (then re-run `install.sh`) or run the unit as
+  `root`. Install under `/opt`, not `/root`.
+- **nuclei: `failed to create config directory … mkdir /home/pentestbot:
+  permission denied`** — the service user has no writable `$HOME`. `install.sh`
+  now creates `/home/pentestbot` and updates templates as that user; on an older
+  install fix it manually:
+  ```bash
+  sudo mkdir -p /home/pentestbot
+  sudo chown -R pentestbot:pentestbot /home/pentestbot
+  sudo -u pentestbot HOME=/home/pentestbot nuclei -update-templates
+  sudo systemctl restart pentest-bot
+  ```
 ```
