@@ -28,6 +28,9 @@ class EngineConfig:
     # masscan packets-per-second. Higher = faster but more aggressive; cheap
     # routers may drop replies if it's too high.
     masscan_rate: int = 5000
+    # nuclei template tag filter. Empty = run the full template set (most
+    # thorough). Set e.g. "router,iot,cve,default-login,exposure" to speed it up.
+    nuclei_tags: str = ""
     # SNMP community strings to test (default/weak).
     snmp_communities: tuple[str, ...] = ("public", "private", "admin")
 

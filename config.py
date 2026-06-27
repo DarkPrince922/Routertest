@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     port_scanner: str = "auto"
     # masscan packets-per-second (higher = faster, more aggressive).
     masscan_rate: int = 5000
+    # nuclei tag filter; empty = full template set (most thorough).
+    nuclei_tags: str = ""
 
     @field_validator("admin_ids", mode="before")
     @classmethod

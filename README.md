@@ -223,7 +223,10 @@ MikroTik, TR-069 7547 → CPE), so a device is fingerprinted and its known CVEs
 flagged even when `-sV` is blocked and there are no service banners. This curated
 list is intentionally small — **nuclei provides the bulk of CVE coverage, so keep
 its templates updated** (`nuclei -update-templates`); if they're missing, the
-nuclei stage now says so in the results. The
+nuclei stage now says so in the results. The nuclei stage probes the common
+router web ports and runs against the **admin UI wherever it lives** (e.g.
+`:8080`), not just 80/443, and uses the **full template set** by default
+(set `NUCLEI_TAGS` to restrict it for speed). The
 **snmp** stage checks default community strings (`public`/`private`/…) on UDP 161
 — a readable community is a high-severity finding and also feeds CVE matching.
 Both feed the immediate 🚨 vulnerable-router alert.
