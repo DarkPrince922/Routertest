@@ -37,7 +37,9 @@ corporate web panel without touching the bot layer.
 
 - Ubuntu 22.04 (the installer targets it; other distros: install deps manually)
 - Python 3.10+
-- External tools: `nmap`, `nuclei`, `routersploit` (the installer handles all three)
+- External tools: `nmap`, `masscan`, `nuclei`, `routersploit`, `hydra`, `snmp`
+  (the installer handles these). `msfconsole` (Metasploit) is optional and
+  installed separately if you want the metasploit stage.
 
 ## Install
 
@@ -217,7 +219,9 @@ sudo journalctl -u pentest-bot -f
 |---|---|
 | `QUICK` | nmap (ports + device fingerprint) |
 | `STANDARD` | nmap + snmp + nuclei + verify |
-| `FULL` | nmap + snmp + nuclei + routersploit + verify |
+| `FULL` | nmap + snmp + nuclei + routersploit + hydra + metasploit* + verify |
+
+\* Metasploit is **off by default** (heavy) — enable in ⚙️ Настройки → 💥.
 
 **Port discovery** uses **masscan** when available (raw-SYN, fast, and gets
 through environments that restrict nmap's connect scans), then nmap `-sV` enriches
@@ -242,6 +246,14 @@ router web ports and runs against the **admin UI wherever it lives** (e.g.
 **snmp** stage checks default community strings (`public`/`private`/…) on UDP 161
 — a readable community is a high-severity finding and also feeds CVE matching.
 Both feed the immediate 🚨 vulnerable-router alert.
+
+The **hydra** stage brute-checks default/weak credentials on SSH/Telnet/FTP and
+HTTP-Basic with a small curated combo list (`-f` stops on first hit — fast, low
+lockout risk); `+bruteforce` creds mode + `HYDRA_PASS_LIST` allows a wordlist.
+The optional **metasploit** stage (enable in ⚙️ Настройки → 💥; needs
+`msfconsole` installed separately, e.g. the Rapid7 nightly/omnibus) runs the
+detected vendor's Metasploit exploit modules' `check()` for far broader exploit
+coverage than routersploit — its hits feed CVE verification as an active method.
 
 The **verify** stage (last in STANDARD/FULL) cross-checks every detected CVE to
 cut false positives. CVEs flagged only by passive fingerprint inference (the

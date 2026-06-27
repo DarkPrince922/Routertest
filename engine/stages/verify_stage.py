@@ -25,7 +25,7 @@ from .nuclei_stage import _build_targets
 log = logging.getLogger(__name__)
 
 VERIFY_TIMEOUT = 180.0
-_ACTIVE = {"nuclei", "routersploit"}
+_ACTIVE = {"nuclei", "routersploit", "metasploit"}
 
 
 async def verify_stage(target: str, ctx: dict | None = None) -> list[Finding]:

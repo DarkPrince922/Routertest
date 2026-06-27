@@ -42,6 +42,10 @@ class EngineConfig:
     # Fast nmap: skip slow OS detection (-O) and use light version detection.
     # Device type still comes from ports/banners/SNMP. Set False for full -sV -O.
     nmap_fast: bool = True
+    # Optional external password list for hydra in +bruteforce mode.
+    hydra_pass_list: str = ""
+    # Metasploit stage (heavy: msfconsole startup + RAM). Off by default.
+    metasploit_enabled: bool = False
     # Max heavy tools (nuclei/routersploit) running at once, regardless of
     # MAX_CONCURRENT. Bounds RAM/CPU so high concurrency doesn't OOM the box.
     heavy_tool_limit: int = 2
@@ -96,3 +100,7 @@ def set_port_scanner(value: str) -> None:
 def set_discovery_method(value: str) -> None:
     if value in ("auto", "masscan", "nmap"):
         _config.discovery_method = value
+
+
+def set_metasploit_enabled(enabled: bool) -> None:
+    _config.metasploit_enabled = enabled

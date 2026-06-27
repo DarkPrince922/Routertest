@@ -28,6 +28,8 @@ from .discovery import discover_hosts, discover_hosts_stream
 from .runtime import get_config
 from .scope import ScopeGate
 from .stages import (
+    hydra_stage,
+    metasploit_stage,
     nmap_stage,
     nuclei_stage,
     routersploit_stage,
@@ -69,6 +71,8 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
         ("snmp", snmp_stage),
         ("nuclei", nuclei_stage),
         ("routersploit", routersploit_stage),
+        ("hydra", hydra_stage),
+        ("metasploit", metasploit_stage),
         ("verify", verify_stage),
     ],
     # FIRMWARE is reserved for v2 (binwalk/EMBA) and intentionally has no stages.

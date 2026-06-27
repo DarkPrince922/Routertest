@@ -33,7 +33,8 @@ def main_menu() -> InlineKeyboardMarkup:
 
 def settings_menu(proxy: str | None, rsf_default_only: bool,
                   interrupted: int, skip_unknown: bool = False,
-                  scanner: str = "auto", discovery: str = "auto") -> InlineKeyboardMarkup:
+                  scanner: str = "auto", discovery: str = "auto",
+                  metasploit: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=("🔌 Прокси: задать" if not proxy else "🔌 Прокси: изменить"),
               callback_data=SettingsCB(action="proxy_set"))
@@ -51,6 +52,8 @@ def settings_menu(proxy: str | None, rsf_default_only: bool,
               callback_data=SettingsCB(action="scanner_cycle"))
     kb.button(text=f"🔎 Поиск живых: {discovery}",
               callback_data=SettingsCB(action="discovery_cycle"))
+    kb.button(text=("💥 Metasploit: вкл" if metasploit else "💥 Metasploit: выкл"),
+              callback_data=SettingsCB(action="msf_toggle"))
     if interrupted:
         kb.button(text=f"♻️ Возобновить прерванные ({interrupted})",
                   callback_data=SettingsCB(action="resume"))

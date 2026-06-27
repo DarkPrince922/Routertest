@@ -66,6 +66,8 @@ async def main() -> None:
     skip_unknown = (db_skip == "true") if db_skip is not None else settings.skip_unknown
     port_scanner = store.get_setting("port_scanner", settings.port_scanner) or "auto"
     discovery_method = store.get_setting("discovery_method", settings.discovery_method) or "auto"
+    db_msf = store.get_setting("metasploit_enabled")
+    metasploit_enabled = (db_msf == "true") if db_msf is not None else settings.metasploit_enabled
     configure(EngineConfig(
         proxy=(db_proxy or None),
         rsf_default_only=rsf_default_only,
@@ -78,6 +80,8 @@ async def main() -> None:
         heavy_tool_limit=settings.heavy_tool_limit,
         discovery_method=discovery_method,
         discovery_rate=settings.discovery_rate,
+        hydra_pass_list=settings.hydra_pass_list,
+        metasploit_enabled=metasploit_enabled,
     ))
 
     bot = Bot(
