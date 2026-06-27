@@ -1,31 +1,61 @@
 """routersploit (rsf) stage — default/weak credential checks and scanners.
 
-routersploit is synchronous, so each module is executed in a worker thread via
-``asyncio.to_thread`` and wrapped in ``asyncio.wait_for`` to enforce a per-module
-timeout (the abandoned thread is harmless; rsf modules are self-contained).
+routersploit is synchronous, so each module runs in a dedicated, bounded thread
+pool (``_RSF_EXECUTOR``) — isolated from asyncio's default executor so a module
+whose check()/run() hangs (threads can't be cancelled) can't starve the rest of
+the system or freeze the bot. Each call is wrapped in ``asyncio.wait_for`` for a
+per-module timeout, and modules get a short socket ``timeout`` option too.
 
-Because the stage signature is ``stage(target)`` only, we do a fast local TCP
-probe of common router service ports and run the relevant credential modules for
-the ports that are open. Any discovered credentials are reported as ``high``.
+We TCP-probe common router service ports, run the relevant credential modules on
+the open ones, plus a built-in HTTP Basic check and (when a vendor was detected
+upstream) that vendor's exploit ``check()`` modules.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import contextlib
+import functools
 import io
 import logging
 import socket
 import ssl
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from ..models import Finding, Severity
 from ..runtime import get_config, heavy_semaphore
 
 log = logging.getLogger(__name__)
 
+# Dedicated, bounded thread pool for routersploit's BLOCKING work. Isolated from
+# asyncio's default executor so a hung rsf module check() (threads can't be
+# cancelled) can't starve nmap/nuclei/banner-grab or freeze the bot. Combined
+# with the heavy-tool semaphore this keeps the rest of the system healthy.
+_RSF_EXECUTOR = ThreadPoolExecutor(max_workers=6, thread_name_prefix="rsf")
+
+
+async def _in_rsf_executor(func, *args):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_RSF_EXECUTOR, functools.partial(func, *args))
+
+
+async def _rsf_call(default, timeout, func, *args):
+    """Run a blocking rsf helper on the dedicated pool with a hard timeout,
+    returning ``default`` on timeout/error so a stuck module can't hang the stage
+    (and thus hold the heavy-tool semaphore) indefinitely."""
+    try:
+        return await asyncio.wait_for(_in_rsf_executor(func, *args), timeout=timeout)
+    except asyncio.TimeoutError:
+        return default
+    except Exception:  # noqa: BLE001
+        return default
+
+
 # Per-module wall-clock budget (seconds).
-MODULE_TIMEOUT = 120.0
+MODULE_TIMEOUT = 60.0
+# Bound the socket-level work inside an rsf module so it can't hang a thread.
+RSF_OPTION_TIMEOUT = 8
 # rsf creds modules for non-HTTP services (HTTP is handled by our own reliable
 # Basic-auth check below, which also works in default-only mode).
 PORT_PROBES: dict[int, list[str]] = {
@@ -68,7 +98,7 @@ async def _routersploit_work(target: str, ctx: dict | None) -> list[Finding]:
 
     # --- non-HTTP services via routersploit -----------------------------------
     if _routersploit_available():
-        open_ports = await asyncio.to_thread(_probe_ports, target, list(PORT_PROBES))
+        open_ports = await _rsf_call([], 20, _probe_ports, target, list(PORT_PROBES))
         for port in open_ports:
             modules = PORT_PROBES[port]
             if default_only:
@@ -76,7 +106,7 @@ async def _routersploit_work(target: str, ctx: dict | None) -> list[Finding]:
             for module_path in modules:
                 try:
                     creds, raw = await asyncio.wait_for(
-                        asyncio.to_thread(_run_module, module_path, target, port),
+                        _in_rsf_executor(_run_module, module_path, target, port),
                         timeout=MODULE_TIMEOUT)
                 except asyncio.TimeoutError:
                     findings.append(Finding("routersploit", Severity.INFO,
@@ -98,12 +128,12 @@ async def _routersploit_work(target: str, ctx: dict | None) -> list[Finding]:
                                 {"error": "routersploit package not importable"}))
 
     # --- HTTP Basic-auth default creds (built-in, reliable) -------------------
-    web = await asyncio.to_thread(_probe_ports, target, WEB_HTTP_PORTS + WEB_HTTPS_PORTS)
+    web = await _rsf_call([], 20, _probe_ports, target, WEB_HTTP_PORTS + WEB_HTTPS_PORTS)
     for port in web:
         https = port in WEB_HTTPS_PORTS
         try:
             cred = await asyncio.wait_for(
-                asyncio.to_thread(_http_basic_creds, target, port, https),
+                _in_rsf_executor(_http_basic_creds, target, port, https),
                 timeout=MODULE_TIMEOUT)
         except asyncio.TimeoutError:
             continue
@@ -125,15 +155,16 @@ async def _routersploit_work(target: str, ctx: dict | None) -> list[Finding]:
 
 
 # ----------------------------------------------------- vendor exploit checks
-# Cap and budget so a vendor with many modules can't run forever.
-MAX_VENDOR_MODULES = 40
-EXPLOIT_CHECK_TIMEOUT = 20.0
+# Cap and budget so a vendor with many modules can't run forever (and can't tie
+# up the dedicated rsf thread pool for too long).
+MAX_VENDOR_MODULES = 15
+EXPLOIT_CHECK_TIMEOUT = 12.0
 
 
 async def _run_vendor_exploits(target: str, vendor: str, port: int) -> list[Finding]:
     """Run check() on each routersploit exploit module for ``vendor`` and report
     the ones the target appears vulnerable to (check only — non-destructive)."""
-    module_paths = await asyncio.to_thread(_list_vendor_modules, vendor)
+    module_paths = await _rsf_call([], 25, _list_vendor_modules, vendor)
     if not module_paths:
         return [Finding("routersploit", Severity.INFO,
                         f"routersploit: модулей для вендора '{vendor}' не найдено", {})]
@@ -146,7 +177,7 @@ async def _run_vendor_exploits(target: str, vendor: str, port: int) -> list[Find
     for module_path in module_paths:
         try:
             vulnerable, info = await asyncio.wait_for(
-                asyncio.to_thread(_check_exploit, module_path, target, port),
+                _in_rsf_executor(_check_exploit, module_path, target, port),
                 timeout=EXPLOIT_CHECK_TIMEOUT)
         except asyncio.TimeoutError:
             continue
@@ -199,6 +230,8 @@ def _check_exploit(module_path: str, target: str, port: int) -> tuple[bool, dict
 
     _set_if_present(exploit, "target", _resolve(target))
     _set_if_present(exploit, "port", port)
+    # Bound any socket work the module does so it can't hang the pool thread.
+    _set_if_present(exploit, "timeout", RSF_OPTION_TIMEOUT)
     info = _exploit_info(exploit, module)
     with contextlib.redirect_stdout(io.StringIO()):
         try:
@@ -310,7 +343,8 @@ def _run_module(module_path: str, target: str, port: int) -> tuple[list[str], st
     _set_if_present(exploit, "port", port)
     _set_if_present(exploit, "stop_on_success", True)
     _set_if_present(exploit, "verbosity", False)
-    _set_if_present(exploit, "threads", 8)
+    _set_if_present(exploit, "threads", 4)
+    _set_if_present(exploit, "timeout", RSF_OPTION_TIMEOUT)
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
