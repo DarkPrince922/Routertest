@@ -115,7 +115,11 @@ RSF_DEFAULT_ONLY=true           # true = only factory-default creds (fast, low l
   takes precedence over `.env`).
 - **`RSF_DEFAULT_ONLY`** — `true` runs only routersploit's `*_default` credential
   modules (a handful of factory creds — fast, unlikely to trip a router lockout).
-  Set `false` to also run the slower `*_bruteforce` modules.
+  Set `false` to also run the slower `*_bruteforce` modules. The credential stage
+  uses routersploit for **FTP/SSH/Telnet** and a **built-in HTTP Basic-auth
+  default-credential check** for the web UI on every open web port (works in
+  default-only mode and won't false-positive on form-login pages — those are
+  covered by nuclei's `default-login` templates).
 
 `scope.yaml` — the **rules of engagement**, the source of truth for what may be
 scanned. Edited on the host and reviewed in version control; it is **never**

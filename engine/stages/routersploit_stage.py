@@ -11,10 +11,13 @@ the ports that are open. Any discovered credentials are reported as ``high``.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import io
 import logging
 import socket
+import ssl
+import urllib.request
 
 from ..models import Finding, Severity
 from ..runtime import get_config
@@ -23,7 +26,8 @@ log = logging.getLogger(__name__)
 
 # Per-module wall-clock budget (seconds).
 MODULE_TIMEOUT = 120.0
-# Ports we probe and the rsf creds modules to try against each.
+# rsf creds modules for non-HTTP services (HTTP is handled by our own reliable
+# Basic-auth check below, which also works in default-only mode).
 PORT_PROBES: dict[int, list[str]] = {
     21: ["routersploit.modules.creds.generic.ftp_default",
          "routersploit.modules.creds.generic.ftp_bruteforce"],
@@ -31,70 +35,115 @@ PORT_PROBES: dict[int, list[str]] = {
          "routersploit.modules.creds.generic.ssh_bruteforce"],
     23: ["routersploit.modules.creds.generic.telnet_default",
          "routersploit.modules.creds.generic.telnet_bruteforce"],
-    80: ["routersploit.modules.creds.generic.http_basic_bruteforce",
-         "routersploit.modules.creds.generic.http_form_bruteforce"],
-    443: ["routersploit.modules.creds.generic.http_basic_bruteforce"],
-    8080: ["routersploit.modules.creds.generic.http_basic_bruteforce",
-           "routersploit.modules.creds.generic.http_form_bruteforce"],
 }
+WEB_HTTP_PORTS = [80, 8080, 8000, 8081, 8888, 81, 8090, 7547]
+WEB_HTTPS_PORTS = [443, 8443, 4433, 8843]
 PROBE_CONNECT_TIMEOUT = 1.5
+HTTP_TIMEOUT = 4
+
+# Curated factory/weak credentials tried against HTTP Basic auth (few attempts,
+# stops on first hit — low lockout risk, runs even in default-only mode).
+DEFAULT_HTTP_CREDS = [
+    ("admin", "admin"), ("admin", "password"), ("admin", ""), ("admin", "1234"),
+    ("admin", "12345"), ("admin", "admin123"), ("admin", "pass"), ("root", "root"),
+    ("root", "admin"), ("root", ""), ("user", "user"), ("support", "support"),
+    ("admin", "router"), ("telecomadmin", "admintelecom"),
+]
 
 
 async def routersploit_stage(target: str) -> list[Finding]:
-    """Run rsf credential modules against open common ports on ``target``."""
-    if not _routersploit_available():
-        return [Finding("routersploit", Severity.INFO, "routersploit not installed",
-                        {"error": "routersploit package not importable"})]
-
-    open_ports = await asyncio.to_thread(_probe_ports, target, list(PORT_PROBES))
-    if not open_ports:
-        return [Finding("routersploit", Severity.INFO,
-                        "no common router service ports open for rsf", {})]
-
-    # "Default-only" mode runs just the *_default modules (a handful of factory
-    # creds) and skips the slower *_bruteforce ones — faster and far less likely
-    # to trip a router's lockout / ban your IP.
+    """Check default/weak credentials: rsf for FTP/SSH/Telnet, a built-in
+    Basic-auth check for the web UI on whatever ports are open."""
+    findings: list[Finding] = []
     default_only = get_config().rsf_default_only
 
-    findings: list[Finding] = []
-    for port in open_ports:
-        modules = PORT_PROBES[port]
-        if default_only:
-            modules = [m for m in modules if "bruteforce" not in m]
-        for module_path in modules:
-            try:
-                creds, raw = await asyncio.wait_for(
-                    asyncio.to_thread(_run_module, module_path, target, port),
-                    timeout=MODULE_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                findings.append(Finding(
-                    "routersploit", Severity.INFO,
-                    f"module timed out: {_short(module_path)} (port {port})",
-                    {"module": module_path, "port": port},
-                ))
-                continue
-            except Exception as exc:  # noqa: BLE001 - isolate per-module failures
-                findings.append(Finding(
-                    "routersploit", Severity.INFO,
-                    f"module error: {_short(module_path)} (port {port})",
-                    {"module": module_path, "port": port, "error": str(exc)},
-                ))
-                continue
+    # --- non-HTTP services via routersploit -----------------------------------
+    if _routersploit_available():
+        open_ports = await asyncio.to_thread(_probe_ports, target, list(PORT_PROBES))
+        for port in open_ports:
+            modules = PORT_PROBES[port]
+            if default_only:
+                modules = [m for m in modules if "bruteforce" not in m]
+            for module_path in modules:
+                try:
+                    creds, raw = await asyncio.wait_for(
+                        asyncio.to_thread(_run_module, module_path, target, port),
+                        timeout=MODULE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    findings.append(Finding("routersploit", Severity.INFO,
+                        f"module timed out: {_short(module_path)} (port {port})",
+                        {"module": module_path, "port": port}))
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    findings.append(Finding("routersploit", Severity.INFO,
+                        f"module error: {_short(module_path)} (port {port})",
+                        {"module": module_path, "port": port, "error": str(exc)}))
+                    continue
+                for cred in creds:
+                    findings.append(Finding("routersploit", Severity.HIGH,
+                        f"default/weak creds {cred} (port {port})",
+                        {"module": module_path, "port": port, "credentials": cred}))
+    else:
+        findings.append(Finding("routersploit", Severity.INFO,
+                                "routersploit not installed (FTP/SSH/Telnet creds skipped)",
+                                {"error": "routersploit package not importable"}))
 
-            for cred in creds:
-                findings.append(Finding(
-                    "routersploit", Severity.HIGH,
-                    f"default/weak creds {cred} (port {port})",
-                    {"module": module_path, "port": port, "credentials": cred},
-                ))
-            if not creds:
-                log.debug("rsf %s port %s: no creds (%s)", module_path, port, raw[:120])
+    # --- HTTP Basic-auth default creds (built-in, reliable) -------------------
+    web = await asyncio.to_thread(_probe_ports, target, WEB_HTTP_PORTS + WEB_HTTPS_PORTS)
+    for port in web:
+        https = port in WEB_HTTPS_PORTS
+        try:
+            cred = await asyncio.wait_for(
+                asyncio.to_thread(_http_basic_creds, target, port, https),
+                timeout=MODULE_TIMEOUT)
+        except asyncio.TimeoutError:
+            continue
+        if cred:
+            findings.append(Finding("routersploit", Severity.HIGH,
+                f"default/weak creds {cred} (HTTP {'https' if https else 'http'} порт {port})",
+                {"service": "http-basic", "port": port, "credentials": cred}))
 
-    if not findings:
+    if not any(f.severity == Severity.HIGH for f in findings):
         findings.append(Finding("routersploit", Severity.INFO,
                                 "no default/weak credentials found", {}))
     return findings
+
+
+# ------------------------------------------------------------- HTTP basic auth
+def _http_basic_creds(target: str, port: int, https: bool) -> str | None:
+    """Try default creds against HTTP Basic auth; return 'user:pass' on success.
+
+    Only engages when the endpoint actually challenges with 401 (Basic), so it
+    won't false-positive on form-login pages (those are covered by nuclei).
+    """
+    scheme = "https" if https else "http"
+    url = f"{scheme}://{target}:{port}/"
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    base = _http_status(url, None, ctx)
+    if base != 401:
+        return None  # not Basic-auth protected
+    for user, pwd in DEFAULT_HTTP_CREDS:
+        code = _http_status(url, (user, pwd), ctx)
+        if code is not None and code not in (401, 403, None) and code < 400:
+            return f"{user}:{pwd}"
+    return None
+
+
+def _http_status(url: str, creds: tuple[str, str] | None, ctx) -> int | None:
+    req = urllib.request.Request(url)
+    if creds is not None:
+        token = base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
+        req.add_header("Authorization", f"Basic {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=ctx) as resp:
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # --------------------------------------------------------------------------- helpers
