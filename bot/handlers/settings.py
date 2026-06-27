@@ -40,6 +40,7 @@ def _view_text(store: Store) -> str:
         f"🔌 Прокси: <code>{esc(proxy)}</code>",
         f"🔑 routersploit: {esc(rsf)}",
         f"🧭 Неизвестные устройства: {esc(unknown)}",
+        f"🛰 Сканер портов: {esc(cfg.port_scanner)}",
     ]
     if interrupted:
         lines.append(f"♻️ Прерванных сканов: <b>{interrupted}</b>")
@@ -51,7 +52,7 @@ async def _show(query: CallbackQuery, store: Store) -> None:
     await safe_edit(query, _view_text(store),
                     keyboards.settings_menu(cfg.proxy, cfg.rsf_default_only,
                                             store.count_interrupted(),
-                                            cfg.skip_unknown))
+                                            cfg.skip_unknown, cfg.port_scanner))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -91,7 +92,8 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
     await safe_edit_message(
         sent, _view_text(store),
         keyboards.settings_menu(value, cfg.rsf_default_only,
-                                store.count_interrupted(), cfg.skip_unknown))
+                                store.count_interrupted(), cfg.skip_unknown,
+                                cfg.port_scanner))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -120,6 +122,18 @@ async def toggle_skip_unknown(query: CallbackQuery, store: Store) -> None:
     await _show(query, store)
     await query.answer("Неизвестные пропускаются" if new_value
                        else "Неизвестные сканируются")
+
+
+_SCANNER_CYCLE = {"auto": "masscan", "masscan": "nmap", "nmap": "auto"}
+
+
+@router.callback_query(SettingsCB.filter(F.action == "scanner_cycle"))
+async def cycle_scanner(query: CallbackQuery, store: Store) -> None:
+    new_value = _SCANNER_CYCLE.get(runtime.get_config().port_scanner, "auto")
+    runtime.set_port_scanner(new_value)
+    store.set_setting("port_scanner", new_value)
+    await _show(query, store)
+    await query.answer(f"Сканер портов: {new_value}")
 
 
 # ---------------------------------------------------------- resume interrupted

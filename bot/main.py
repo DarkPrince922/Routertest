@@ -64,10 +64,12 @@ async def main() -> None:
     rsf_default_only = (db_rsf == "true") if db_rsf is not None else settings.rsf_default_only
     db_skip = store.get_setting("skip_unknown")
     skip_unknown = (db_skip == "true") if db_skip is not None else settings.skip_unknown
+    port_scanner = store.get_setting("port_scanner", settings.port_scanner) or "auto"
     configure(EngineConfig(
         proxy=(db_proxy or None),
         rsf_default_only=rsf_default_only,
         skip_unknown=skip_unknown,
+        port_scanner=port_scanner,
     ))
 
     bot = Bot(

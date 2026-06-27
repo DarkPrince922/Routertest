@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     rsf_default_only: bool = True
     # Also skip deep stages when the device type can't be determined (unknown).
     skip_unknown: bool = False
+    # Port-discovery engine: auto | masscan | nmap.
+    port_scanner: str = "auto"
 
     @field_validator("admin_ids", mode="before")
     @classmethod

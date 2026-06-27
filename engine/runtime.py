@@ -22,6 +22,9 @@ class EngineConfig:
     # When True, also skip the deep stages on targets whose device type could
     # NOT be determined (verdict "unknown"), not just confirmed non-routers.
     skip_unknown: bool = False
+    # Port-discovery engine: "auto" (masscan if installed, else nmap),
+    # "masscan", or "nmap". masscan is faster and bypasses connect-scan limits.
+    port_scanner: str = "auto"
     # SNMP community strings to test (default/weak).
     snmp_communities: tuple[str, ...] = ("public", "private", "admin")
 
@@ -49,3 +52,8 @@ def set_rsf_default_only(enabled: bool) -> None:
 
 def set_skip_unknown(enabled: bool) -> None:
     _config.skip_unknown = enabled
+
+
+def set_port_scanner(value: str) -> None:
+    if value in ("auto", "masscan", "nmap"):
+        _config.port_scanner = value

@@ -13,6 +13,7 @@ from xml.etree import ElementTree as ET
 
 from ..cve_db import match_fingerprint
 from ..models import Finding, Severity
+from ..portscan import masscan_available, masscan_ports
 from ..runtime import get_config
 from ._banners import grab_banners
 from ._common import ToolNotFound, run_cmd
@@ -52,24 +53,54 @@ ROUTER_KEYWORDS = (
 
 
 async def nmap_stage(target: str) -> list[Finding]:
-    """Run nmap with service + OS detection and classify the device type.
+    """Discover open ports and classify the device type.
 
-    Scans the curated router ports first; if nothing is open it auto-retries the
-    top-1000 ports (catches services on unusual ports). OS detection (`-O`) is
-    dropped automatically when we lack the raw-socket privilege.
+    Port discovery uses masscan when available/selected (fast, raw-SYN — gets
+    through connect-scan limits), then nmap ``-sV`` enriches just those ports with
+    service/version/OS. Otherwise nmap scans directly (router ports, with a
+    top-1000 fallback). Banner grabbing + CVE matching run regardless.
     """
-    parsed = await _run_and_parse(target, ["-p", ROUTER_PORTS])
-    if parsed is None:
-        return [Finding("nmap", Severity.INFO, "nmap not installed or no output",
-                        {"error": "nmap missing or produced no output"})]
-    port_findings, products, services, os_info, open_ports = parsed
+    port_findings: list[Finding] = []
+    products: list[str] = []
+    services: list[str] = []
+    os_info: dict = {}
+    open_ports: list[int] = []
 
-    # Fallback: the router may expose its web UI / services on a non-standard
-    # port. If the fast scan found nothing open, widen to the top 1000 ports.
-    if not open_ports:
-        wider = await _run_and_parse(target, ["--top-ports", "1000"])
-        if wider is not None and wider[4]:
-            port_findings, products, services, os_info, open_ports = wider
+    # --- 1. masscan fast path ------------------------------------------------
+    scanner = get_config().port_scanner
+    use_masscan = scanner in ("auto", "masscan") and masscan_available()
+    if use_masscan:
+        mports, merr = await masscan_ports(target, ROUTER_PORTS)
+        if not mports and scanner in ("auto", "masscan"):
+            # widen to top router+common ports before giving up
+            mports, merr = await masscan_ports(target, "1-65535"
+                                               if scanner == "masscan" else ROUTER_PORTS)
+        if mports:
+            open_ports = mports
+            # Enrich with nmap -sV on just the open ports (best-effort).
+            enriched = await _run_and_parse(
+                target, ["-p", ",".join(str(p) for p in mports)])
+            if enriched is not None and enriched[4]:
+                port_findings, products, services, os_info, open_ports = enriched
+            else:
+                port_findings = [_bare_port_finding(p) for p in mports]
+        elif merr:
+            log.info("masscan unusable (%s) — falling back to nmap", merr)
+            use_masscan = False
+        else:
+            use_masscan = False  # masscan ran but found nothing → try nmap too
+
+    # --- 2. nmap path (default / fallback) -----------------------------------
+    if not open_ports and not use_masscan:
+        parsed = await _run_and_parse(target, ["-p", ROUTER_PORTS])
+        if parsed is None:
+            return [Finding("nmap", Severity.INFO, "no port scanner available",
+                            {"error": "neither masscan nor nmap produced output"})]
+        port_findings, products, services, os_info, open_ports = parsed
+        if not open_ports:
+            wider = await _run_and_parse(target, ["--top-ports", "1000"])
+            if wider is not None and wider[4]:
+                port_findings, products, services, os_info, open_ports = wider
 
     # Active banner enrichment (HTTP Server/title, SSH/Telnet) to sharpen the
     # model/firmware fingerprint. Best-effort and proxied if configured.
@@ -89,6 +120,14 @@ async def nmap_stage(target: str) -> list[Finding]:
     if not findings:
         findings.append(Finding("nmap", Severity.INFO, "no open ports found", {}))
     return findings
+
+
+def _bare_port_finding(port: int) -> Finding:
+    """Port finding from masscan alone (no nmap service detection available)."""
+    return Finding(
+        stage="nmap", severity=Severity.INFO, title=f"{port}/tcp open",
+        detail={"port": str(port), "protocol": "tcp", "service": "unknown",
+                "product": "", "version": ""})
 
 
 def _needs_privileges(stderr: str) -> bool:

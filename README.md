@@ -196,8 +196,8 @@ sudo journalctl -u pentest-bot -f
 - **ℹ️ Статус** — queue depth, active scans, tool versions, interrupted count.
 - **⚙️ Настройки** — set/clear the SOCKS5/HTTP proxy, toggle the routersploit
   creds mode (default-only ↔ +bruteforce), toggle skip-unknown (strict ↔ lenient
-  device detection), and **resume or clear** interrupted scans. Proxy and the
-  toggles are persisted in the DB.
+  device detection), cycle the **port scanner** (auto / masscan / nmap), and
+  **resume or clear** interrupted scans. All persisted in the DB.
 
 ### Scan profiles
 
@@ -206,6 +206,13 @@ sudo journalctl -u pentest-bot -f
 | `QUICK` | nmap (ports + device fingerprint) |
 | `STANDARD` | nmap + snmp + nuclei |
 | `FULL` | nmap + snmp + nuclei + routersploit |
+
+**Port discovery** uses **masscan** when available (raw-SYN, fast, and gets
+through environments that restrict nmap's connect scans), then nmap `-sV` enriches
+just the open ports with service/version/OS. If masscan is unavailable or finds
+nothing, it falls back to a direct nmap scan. Pick the engine in
+**⚙️ Настройки → 🛰 Сканер портов** (`auto` / `masscan` / `nmap`); masscan needs
+the `CAP_NET_RAW` the systemd unit already grants.
 
 The **nmap** stage also grabs HTTP `Server`/`<title>` and SSH/Telnet banners to
 sharpen the model/firmware fingerprint, and matches the detected firmware against
@@ -296,14 +303,18 @@ are tuned for a balance of speed and coverage on routers:
 
 ## Troubleshooting
 
-- **nmap reports all ports closed on a host you know is open** — almost always a
-  **reachability** problem, not nmap. If the bot runs on a cloud/VPS host, it
-  cannot reach a private LAN address like `192.168.1.1` (that's *its* network's
-  gateway, not your home router). Run the bot **on the same LAN** as the targets,
-  or tunnel into that LAN (VPN / SOCKS on the host). `SCAN_PROXY` only covers the
-  HTTP-layer tools — nmap is not proxied. The nmap stage also auto-retries the
-  top-1000 ports if the curated router-port list finds nothing, so a service on
-  an unusual port is still caught when the host is reachable.
+- **0 open ports on a host you know is open** — check, in order:
+  1. **Reachability.** If the bot runs on a cloud/VPS host, it cannot reach a
+     private LAN address like `192.168.1.1` (that's *its* network's gateway, not
+     your home router). Verify from the host: `sudo -u pentestbot nmap -Pn -p80,443
+     <target>` and `ping <target>`. If those see nothing, run the bot **on the
+     same LAN** or tunnel in (VPN). No tool swap fixes this.
+  2. **nmap connect-scan restricted / "forbidden ports".** Switch the engine to
+     **⚙️ Настройки → 🛰 Сканер портов → masscan** (raw-SYN, bypasses connect
+     limits). masscan needs `CAP_NET_RAW` (granted by the systemd unit; if you run
+     the bot manually, run it as root or grant the cap).
+  3. **Unusual port.** The nmap path auto-retries the top-1000 ports; masscan can
+     be pointed at all ports (it widens to `1-65535` when explicitly selected).
 
 - **`systemctl status` shows `200/CHDIR`** — the project lives somewhere the
   service user (`pentestbot`) can't enter, typically under `/root`. Move it to
