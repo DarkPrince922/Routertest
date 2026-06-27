@@ -51,7 +51,9 @@ async def show_status(query: CallbackQuery, engine: Engine, store: Store) -> Non
         "<b>Версии инструментов:</b>\n"
         f"  • nmap: {versions['nmap']}\n"
         f"  • nuclei: {versions['nuclei']}\n"
-        f"  • routersploit: {versions['routersploit']}"
+        f"  • routersploit: {versions['routersploit']}\n"
+        f"  • masscan: {versions['masscan']} · hydra: {versions['hydra']} · "
+        f"snmp: {versions['snmp']} · metasploit: {versions['metasploit']}"
     )
     await safe_edit(query, text, keyboards.back_to_menu())
     await query.answer()

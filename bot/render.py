@@ -107,6 +107,10 @@ def stage_done_lines(stage_name: str, findings: list[Finding]) -> list[str]:
     if stage_name == "nmap":
         ports = [f for f in findings if f.stage == "nmap" and "port" in f.detail]
         lines = [f"🛜 Открытых портов: {len(ports)}"]
+        # Mirror the runner's gate: a host with any open scannable port is scanned
+        # regardless of the device-type guess, so don't announce a skip for it.
+        from engine.runner import SCANNABLE_PORTS
+        scannable = any(_finding_port(f) in SCANNABLE_PORTS for f in ports)
         for f in findings:
             if f.stage != "fingerprint":
                 continue
@@ -116,11 +120,14 @@ def stage_done_lines(stage_name: str, findings: list[Finding]) -> list[str]:
                 lines.append(f"🧭 Определено устройство: <b>{esc(label)}</b>")
             elif verdict == "not_router":
                 lines.append(f"🚫 {esc(label)} — это не роутер")
-                lines.append("⏭️ Пропускаю проверки уязвимостей")
+                if not scannable:
+                    lines.append("⏭️ Пропускаю проверки уязвимостей")
+                else:
+                    lines.append("⚙️ Но есть открытые порты — всё равно проверяю")
             else:
                 lines.append(f"❔ Тип устройства: {esc(label)}")
                 from engine.runtime import get_config
-                if get_config().skip_unknown:
+                if get_config().skip_unknown and not scannable:
                     lines.append("⏭️ Тип не определён — пропускаю проверки")
         return lines
 
@@ -268,6 +275,14 @@ def scope_view(config: ScopeConfig) -> str:
         f"<b>Разрешённые хосты:</b>\n{hosts}\n\n"
         "<i>Изменение целей — только правкой scope.yaml и рестартом сервиса.</i>"
     )
+
+
+def _finding_port(f: Finding) -> int:
+    """Parse the TCP port out of an nmap port finding (-1 if absent/invalid)."""
+    try:
+        return int(f.detail.get("port", ""))
+    except (TypeError, ValueError):
+        return -1
 
 
 def _breakdown(findings: list[Finding]) -> dict[str, int]:

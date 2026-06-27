@@ -20,11 +20,21 @@ async def _version(cmd: list[str]) -> str:
 
 
 async def tool_versions() -> dict[str, str]:
-    nmap = await _version(["nmap", "--version"])
-    nuclei = await _version(["nuclei", "-version"])
+    nmap, nuclei, masscan, hydra, snmp, msf = await asyncio.gather(
+        _version(["nmap", "--version"]),
+        _version(["nuclei", "-version"]),
+        _version(["masscan", "--version"]),
+        _version(["hydra", "-h"]),
+        _version(["snmpget", "--version"]),
+        _version(["msfconsole", "--version"]),
+    )
     rsf = "установлен" if importlib.util.find_spec("routersploit") else "не установлен"
     return {
         "nmap": nmap.replace("Nmap version ", "").split(" (")[0] if nmap != "не установлен" else nmap,
         "nuclei": nuclei,
         "routersploit": rsf,
+        "masscan": "✅" if masscan != "не установлен" else "❌",
+        "hydra": "✅" if hydra != "не установлен" else "❌",
+        "snmp": "✅" if snmp != "не установлен" else "❌",
+        "metasploit": "✅" if msf != "не установлен" else "❌",
     }

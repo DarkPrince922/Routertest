@@ -17,7 +17,7 @@ from aiogram.types import CallbackQuery, Message
 
 from engine.discovery import subnet_host_count
 from engine.models import Finding, ScanJob, ScanProfile
-from engine.runner import Engine
+from engine.runner import SCANNABLE_PORTS, Engine
 from engine.runtime import get_config
 from engine.scope import ScopeGate
 from engine.store import Store
@@ -45,6 +45,18 @@ MAX_FILE_BYTES = 10_000_000
 
 # batch_key (aggregate message id) -> control object, for live stop-all.
 _BATCHES: dict[int, "_BatchControl"] = {}
+
+
+def _open_ports(findings: list[Finding]) -> list[int]:
+    """Open TCP ports parsed out of the nmap stage's port findings."""
+    ports: list[int] = []
+    for f in findings:
+        if f.stage == "nmap":
+            try:
+                ports.append(int(f.detail.get("port", "")))
+            except (TypeError, ValueError):
+                continue
+    return ports
 
 
 def _make_alert(message: Message):
@@ -512,14 +524,19 @@ class _BatchTracker:
                 fp = next((f for f in findings if f.stage == "fingerprint"), None)
                 if fp is not None:
                     verdict = fp.detail.get("verdict", "unknown")
+                    # Mirror the runner's gate: a host with any open scannable port
+                    # is scanned regardless of the device-type guess, so don't show
+                    # a "пропускаю" notice for it (it would contradict the scan).
+                    scannable = any(p in SCANNABLE_PORTS for p in _open_ports(findings))
                     if verdict == "router":
                         self._device[job.id] = (fp.detail.get("os_name")
                                                 or fp.detail.get("vendor") or "роутер")
-                    elif verdict == "not_router":
+                    elif verdict == "not_router" and not scannable:
                         self._active[job.id] = f"<code>{esc(job.target)}</code> — 🚫 не роутер, пропускаю"
                         await self._render()
                         return
-                    elif verdict == "unknown" and get_config().skip_unknown:
+                    elif (verdict == "unknown" and get_config().skip_unknown
+                          and not scannable):
                         self._active[job.id] = f"<code>{esc(job.target)}</code> — ❔ тип не определён, пропускаю"
                         await self._render()
                         return
