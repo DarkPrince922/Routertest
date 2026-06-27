@@ -52,7 +52,7 @@ ROUTER_KEYWORDS = (
 )
 
 
-async def nmap_stage(target: str) -> list[Finding]:
+async def nmap_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     """Discover open ports and classify the device type.
 
     Port discovery uses masscan when available/selected (fast, raw-SYN — gets
@@ -113,11 +113,21 @@ async def nmap_stage(target: str) -> list[Finding]:
     # Vendor hints from characteristic open ports (works even when -sV is
     # blocked and there are no service banners — e.g. MikroTik Winbox 8291).
     hints = _port_hints(open_ports)
+    blob = _blob(products, services, os_info, banners, hints)
 
+    fp = _fingerprint_finding(products, services, os_info, banners, hints)
     findings: list[Finding] = list(port_findings)
-    findings.append(_fingerprint_finding(products, services, os_info, banners, hints))
+    findings.append(fp)
     # Version-aware CVE hits from the curated KB against the whole fingerprint.
-    findings.extend(match_fingerprint(_blob(products, services, os_info, banners, hints)))
+    findings.extend(match_fingerprint(blob))
+
+    # Share what we learned with later stages (routersploit reads the vendor).
+    if ctx is not None:
+        ctx["verdict"] = fp.detail.get("verdict")
+        ctx["vendor"] = detect_vendor(blob)
+        ctx["model"] = fp.detail.get("label", "")
+        ctx["open_ports"] = open_ports
+        ctx["fingerprint_blob"] = blob
 
     if not findings:
         findings.append(Finding("nmap", Severity.INFO, "no open ports found", {}))
@@ -137,6 +147,38 @@ PORT_VENDOR_HINTS = {
 
 def _port_hints(open_ports: list[int]) -> str:
     return " ".join(PORT_VENDOR_HINTS[p] for p in open_ports if p in PORT_VENDOR_HINTS)
+
+
+# Canonical vendor -> aliases to look for in the fingerprint blob. The canonical
+# key matches routersploit's exploit package name (routers.<vendor>).
+VENDOR_ALIASES = {
+    "mikrotik": ("mikrotik", "routeros", "routerboard", "rosssh", "winbox"),
+    "dlink": ("d-link", "dlink", "dir-6", "dir-8", "dsl-"),
+    "tplink": ("tp-link", "tplink", "archer", "tl-wr", "tl-wa"),
+    "netgear": ("netgear",),
+    "asus": ("asuswrt", "asus router", "asus"),
+    "huawei": ("huawei", "hg8", "hg53", "echolife"),
+    "zyxel": ("zyxel",),
+    "linksys": ("linksys",),
+    "cisco": ("cisco ios", "cisco"),
+    "ubiquiti": ("ubiquiti", "edgeos", "edgerouter", "airos"),
+    "juniper": ("juniper",),
+    "fortinet": ("fortinet", "fortigate"),
+    "tenda": ("tenda",),
+    "comtrend": ("comtrend",),
+    "billion": ("billion",),
+    "technicolor": ("technicolor", "thomson"),
+    "draytek": ("draytek", "vigor"),
+}
+
+
+def detect_vendor(blob: str) -> str | None:
+    """Return a canonical vendor key from the fingerprint blob, or None."""
+    low = blob.lower()
+    for vendor, aliases in VENDOR_ALIASES.items():
+        if any(a in low for a in aliases):
+            return vendor
+    return None
 
 
 def _bare_port_finding(port: int) -> Finding:

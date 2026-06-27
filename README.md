@@ -120,6 +120,13 @@ RSF_DEFAULT_ONLY=true           # true = only factory-default creds (fast, low l
   default-credential check** for the web UI on every open web port (works in
   default-only mode and won't false-positive on form-login pages — those are
   covered by nuclei's `default-login` templates).
+- **Vendor-specific exploit checks** — once the fingerprint identifies the vendor
+  (MikroTik, D-Link, TP-Link, Netgear, ASUS, Huawei, Zyxel, …), the routersploit
+  stage runs that vendor's exploit modules' `check()` (non-destructive) against
+  the target and flags the ones it appears vulnerable to (`🎯 Потенциально
+  уязвим …`). The detected vendor/model is passed between stages via a shared
+  per-scan context (nmap → snmp → routersploit), and SNMP `sysDescr` gives the
+  most precise model/firmware string.
 
 `scope.yaml` — the **rules of engagement**, the source of truth for what may be
 scanned. Edited on the host and reviewed in version control; it is **never**

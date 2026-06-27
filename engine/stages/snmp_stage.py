@@ -12,6 +12,7 @@ from ..cve_db import match_fingerprint
 from ..models import Finding, Severity
 from ..runtime import get_config
 from ._common import ToolNotFound, run_cmd
+from .nmap_stage import detect_vendor
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ SNMP_TIMEOUT = 20.0
 SYSDESCR_OID = "1.3.6.1.2.1.1.1.0"  # the device's system description
 
 
-async def snmp_stage(target: str) -> list[Finding]:
+async def snmp_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     """Try default community strings against sysDescr; report any that answer."""
     communities = get_config().snmp_communities
     findings: list[Finding] = []
@@ -46,8 +47,19 @@ async def snmp_stage(target: str) -> list[Finding]:
                 f"SNMP: доступна community '{community}' (чтение)",
                 {"community": community, "sysDescr": sysdescr[:300]},
             ))
+            findings.append(Finding(
+                "snmp", Severity.INFO, f"🧭 Модель (SNMP): {sysdescr[:160]}",
+                {"sysDescr": sysdescr[:300]}))
             # The sysDescr often reveals model/firmware → check it for CVEs too.
             findings.extend(match_fingerprint(sysdescr.lower()))
+            # sysDescr is the most precise model source — enrich the shared ctx.
+            if ctx is not None:
+                ctx["model"] = sysdescr[:160]
+                if not ctx.get("vendor"):
+                    ctx["vendor"] = detect_vendor(sysdescr.lower())
+                ctx["fingerprint_blob"] = (
+                    ctx.get("fingerprint_blob", "") + " " + sysdescr.lower())
+            break  # one working community is enough
 
     if not found_any:
         findings.append(Finding("snmp", Severity.INFO,

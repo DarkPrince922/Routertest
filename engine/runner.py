@@ -33,8 +33,10 @@ from .store import Store
 
 log = logging.getLogger(__name__)
 
-# A stage is an async callable: target -> list[Finding].
-Stage = Callable[[str], Awaitable[list[Finding]]]
+# A stage is an async callable: (target, shared_context) -> list[Finding].
+# The context dict is threaded through a job's stages so later stages can use
+# what earlier ones learned (e.g. routersploit reads the detected vendor).
+Stage = Callable[[str, dict], Awaitable[list[Finding]]]
 # Progress callback (a stage is about to run): (job, stage_name, index, total).
 ProgressCB = Callable[[ScanJob, str, int, int], Awaitable[None]]
 # Stage-done callback (a stage just finished): (job, stage_name, findings, idx, total).
@@ -254,6 +256,7 @@ class Engine:
         all_findings: list[Finding] = []
         device_label = ""
         final_status = JobStatus.DONE
+        ctx: dict = {}  # shared across this job's stages (vendor/model/ports…)
         try:
             for idx, (name, stage) in enumerate(stages, start=1):
                 if job.id in self._cancel_requested:
@@ -262,7 +265,7 @@ class Engine:
                 if item.on_progress is not None:
                     await _safe(item.on_progress(job, name, idx, total))
 
-                findings = await self._run_stage(name, stage, job.target, job.id)
+                findings = await self._run_stage(name, stage, job.target, job.id, ctx)
                 self._store.add_findings(job.id, findings)
                 all_findings.extend(findings)
 
@@ -338,13 +341,13 @@ class Engine:
                               decision=status.value, engagement_id=job.engagement_id)
 
     async def _run_stage(self, name: str, stage: Stage, target: str,
-                         job_id: int) -> list[Finding]:
+                         job_id: int, ctx: dict) -> list[Finding]:
         """Run one stage as a cancellable task.
 
         A failing stage yields an info Finding (never aborts the scan); a cancelled
         stage re-raises ``CancelledError`` so the job is marked CANCELLED.
         """
-        task: asyncio.Task = asyncio.ensure_future(stage(target))
+        task: asyncio.Task = asyncio.ensure_future(stage(target, ctx))
         self._running_stage[job_id] = task
         try:
             return await task

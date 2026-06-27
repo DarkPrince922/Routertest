@@ -51,9 +51,9 @@ DEFAULT_HTTP_CREDS = [
 ]
 
 
-async def routersploit_stage(target: str) -> list[Finding]:
-    """Check default/weak credentials: rsf for FTP/SSH/Telnet, a built-in
-    Basic-auth check for the web UI on whatever ports are open."""
+async def routersploit_stage(target: str, ctx: dict | None = None) -> list[Finding]:
+    """Credential checks (rsf FTP/SSH/Telnet + built-in HTTP Basic) and, when a
+    vendor was detected upstream, vendor-specific routersploit exploit checks."""
     findings: list[Finding] = []
     default_only = get_config().rsf_default_only
 
@@ -103,10 +103,114 @@ async def routersploit_stage(target: str) -> list[Finding]:
                 f"default/weak creds {cred} (HTTP {'https' if https else 'http'} порт {port})",
                 {"service": "http-basic", "port": port, "credentials": cred}))
 
+    # --- vendor-specific exploit checks (the real routersploit power) ---------
+    vendor = (ctx or {}).get("vendor")
+    if vendor and _routersploit_available():
+        web_port = next((p for p in (web or []) if p in WEB_HTTP_PORTS), 80)
+        findings.extend(await _run_vendor_exploits(target, vendor, web_port))
+
     if not any(f.severity == Severity.HIGH for f in findings):
         findings.append(Finding("routersploit", Severity.INFO,
-                                "no default/weak credentials found", {}))
+                                "no default/weak credentials or known exploits", {}))
     return findings
+
+
+# ----------------------------------------------------- vendor exploit checks
+# Cap and budget so a vendor with many modules can't run forever.
+MAX_VENDOR_MODULES = 40
+EXPLOIT_CHECK_TIMEOUT = 20.0
+
+
+async def _run_vendor_exploits(target: str, vendor: str, port: int) -> list[Finding]:
+    """Run check() on each routersploit exploit module for ``vendor`` and report
+    the ones the target appears vulnerable to (check only — non-destructive)."""
+    module_paths = await asyncio.to_thread(_list_vendor_modules, vendor)
+    if not module_paths:
+        return [Finding("routersploit", Severity.INFO,
+                        f"routersploit: модулей для вендора '{vendor}' не найдено", {})]
+
+    findings: list[Finding] = [Finding(
+        "routersploit", Severity.INFO,
+        f"routersploit: проверяю {len(module_paths)} эксплойт(ов) для {vendor}",
+        {"vendor": vendor, "count": len(module_paths)})]
+
+    for module_path in module_paths:
+        try:
+            vulnerable, info = await asyncio.wait_for(
+                asyncio.to_thread(_check_exploit, module_path, target, port),
+                timeout=EXPLOIT_CHECK_TIMEOUT)
+        except asyncio.TimeoutError:
+            continue
+        except Exception:  # noqa: BLE001
+            continue
+        if vulnerable:
+            name = info.get("name") or _short(module_path)
+            findings.append(Finding(
+                "routersploit", Severity.HIGH,
+                f"🎯 Потенциально уязвим: {name} [{_short(module_path)}]",
+                {"module": module_path, "vendor": vendor, **info}))
+    return findings
+
+
+def _list_vendor_modules(vendor: str) -> list[str]:
+    """Enumerate routersploit exploit module paths for a vendor's router package."""
+    import importlib
+    import pkgutil
+
+    pkg_name = f"routersploit.modules.exploits.routers.{vendor}"
+    try:
+        pkg = importlib.import_module(pkg_name)
+    except ImportError:
+        return []
+    found: list[str] = []
+    for _, name, is_pkg in pkgutil.walk_packages(pkg.__path__, pkg_name + "."):
+        if not is_pkg:
+            found.append(name)
+        if len(found) >= MAX_VENDOR_MODULES:
+            break
+    return found
+
+
+def _check_exploit(module_path: str, target: str, port: int) -> tuple[bool, dict]:
+    """Import an exploit module, run its check() (non-destructive). Returns
+    ``(vulnerable, info)``."""
+    import importlib
+
+    try:
+        module = importlib.import_module(module_path)
+    except Exception:  # noqa: BLE001
+        return False, {}
+    exploit_cls = getattr(module, "Exploit", None)
+    if exploit_cls is None:
+        return False, {}
+    try:
+        exploit = exploit_cls()
+    except Exception:  # noqa: BLE001
+        return False, {}
+
+    _set_if_present(exploit, "target", _resolve(target))
+    _set_if_present(exploit, "port", port)
+    info = _exploit_info(exploit, module)
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            result = exploit.check()
+        except Exception:  # noqa: BLE001
+            return False, info
+    return (result is True), info
+
+
+def _exploit_info(exploit: object, module: object) -> dict:
+    info: dict = {}
+    name = getattr(exploit, "_name_", None) or getattr(module, "__name__", "")
+    if name:
+        info["name"] = str(name)
+    refs = getattr(exploit, "_references_", None) or getattr(exploit, "references", None)
+    if refs:
+        info["references"] = [str(r) for r in list(refs)[:5]]
+    cve = next((str(r) for r in (refs or []) if "CVE" in str(r).upper()), None)
+    if cve:
+        info["cve"] = cve
+    return info
 
 
 # ------------------------------------------------------------- HTTP basic auth

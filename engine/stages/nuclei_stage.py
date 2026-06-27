@@ -20,7 +20,7 @@ HTTPS_PORTS = [443, 8443, 4433, 8843]
 _PROBE_TIMEOUT = 1.0
 
 
-async def nuclei_stage(target: str) -> list[Finding]:
+async def nuclei_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     """Run nuclei against the target's open web ports (+ the host for network
     templates). Uses the full template set by default; ``NUCLEI_TAGS`` may
     restrict it for speed.
