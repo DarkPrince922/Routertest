@@ -23,6 +23,7 @@ import ssl
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+from ..cve_db import record_cve
 from ..models import Finding, Severity
 from ..runtime import get_config, heavy_semaphore
 
@@ -146,7 +147,10 @@ async def _routersploit_work(target: str, ctx: dict | None) -> list[Finding]:
     vendor = (ctx or {}).get("vendor")
     if vendor and _routersploit_available():
         web_port = next((p for p in (web or []) if p in WEB_HTTP_PORTS), 80)
-        findings.extend(await _run_vendor_exploits(target, vendor, web_port))
+        for vf in await _run_vendor_exploits(target, vendor, web_port):
+            findings.append(vf)
+            if vf.severity == Severity.HIGH and vf.detail.get("cve"):
+                record_cve(ctx, vf.detail.get("cve"), "routersploit")
 
     if not any(f.severity == Severity.HIGH for f in findings):
         findings.append(Finding("routersploit", Severity.INFO,

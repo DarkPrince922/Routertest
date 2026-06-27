@@ -11,7 +11,7 @@ import asyncio
 import logging
 from xml.etree import ElementTree as ET
 
-from ..cve_db import match_fingerprint
+from ..cve_db import match_fingerprint, record_cve
 from ..models import Finding, Severity
 from ..portscan import masscan_available, masscan_ports
 from ..runtime import get_config
@@ -119,7 +119,10 @@ async def nmap_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     findings: list[Finding] = list(port_findings)
     findings.append(fp)
     # Version-aware CVE hits from the curated KB against the whole fingerprint.
-    findings.extend(match_fingerprint(blob))
+    # These are PASSIVE inference (by vendor/banner) — the verify stage re-checks.
+    for cve_finding in match_fingerprint(blob):
+        findings.append(cve_finding)
+        record_cve(ctx, cve_finding.detail.get("cve"), "fingerprint")
 
     # Share what we learned with later stages (routersploit reads the vendor).
     if ctx is not None:

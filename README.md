@@ -216,8 +216,8 @@ sudo journalctl -u pentest-bot -f
 | Profile | Stages |
 |---|---|
 | `QUICK` | nmap (ports + device fingerprint) |
-| `STANDARD` | nmap + snmp + nuclei |
-| `FULL` | nmap + snmp + nuclei + routersploit |
+| `STANDARD` | nmap + snmp + nuclei + verify |
+| `FULL` | nmap + snmp + nuclei + routersploit + verify |
 
 **Port discovery** uses **masscan** when available (raw-SYN, fast, and gets
 through environments that restrict nmap's connect scans), then nmap `-sV` enriches
@@ -242,6 +242,14 @@ router web ports and runs against the **admin UI wherever it lives** (e.g.
 **snmp** stage checks default community strings (`public`/`private`/…) on UDP 161
 — a readable community is a high-severity finding and also feeds CVE matching.
 Both feed the immediate 🚨 vulnerable-router alert.
+
+The **verify** stage (last in STANDARD/FULL) cross-checks every detected CVE to
+cut false positives. CVEs flagged only by passive fingerprint inference (the
+curated KB) are **actively re-checked** by running that exact nuclei template
+(`-id <CVE>`): a match → `✅ подтверждён`, ran but no match → `⚠️ вероятно ложное`,
+no template to check with → `ℹ️ не перепроверено`. CVEs already found by an
+active method (nuclei/routersploit) or corroborated by ≥2 methods are marked
+`✅ подтверждён`.
 | `FIRMWARE` | *reserved* (binwalk/EMBA) — not implemented in v1 |
 
 ## Security model

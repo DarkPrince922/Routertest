@@ -6,6 +6,7 @@ import json
 import logging
 import socket
 
+from ..cve_db import record_cve
 from ..models import Finding, normalize_severity
 from ..runtime import get_config, heavy_semaphore
 from ._common import ToolNotFound, run_cmd
@@ -55,7 +56,11 @@ async def nuclei_stage(target: str, ctx: dict | None = None) -> list[Finding]:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
-        findings.append(_parse_nuclei_event(obj))
+        f = _parse_nuclei_event(obj)
+        findings.append(f)
+        tid = (f.detail.get("template_id") or "")
+        if tid.upper().startswith("CVE"):
+            record_cve(ctx, tid, "nuclei")
 
     if not findings:
         low = stderr.lower()

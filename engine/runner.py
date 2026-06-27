@@ -27,7 +27,13 @@ from .models import (
 from .discovery import discover_hosts, discover_hosts_stream
 from .runtime import get_config
 from .scope import ScopeGate
-from .stages import nmap_stage, nuclei_stage, routersploit_stage, snmp_stage
+from .stages import (
+    nmap_stage,
+    nuclei_stage,
+    routersploit_stage,
+    snmp_stage,
+    verify_stage,
+)
 from .stages.nmap_stage import router_verdict
 from .store import Store
 
@@ -56,12 +62,14 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
         ("nmap", nmap_stage),
         ("snmp", snmp_stage),
         ("nuclei", nuclei_stage),
+        ("verify", verify_stage),
     ],
     ScanProfile.FULL: [
         ("nmap", nmap_stage),
         ("snmp", snmp_stage),
         ("nuclei", nuclei_stage),
         ("routersploit", routersploit_stage),
+        ("verify", verify_stage),
     ],
     # FIRMWARE is reserved for v2 (binwalk/EMBA) and intentionally has no stages.
     ScanProfile.FIRMWARE: [],

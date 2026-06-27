@@ -58,6 +58,17 @@ def _load() -> list[_Entry]:
     return _entries
 
 
+def record_cve(ctx: dict | None, cve: str | None, method: str) -> None:
+    """Track which detection methods flagged each CVE, for the verify stage.
+
+    ``method`` ∈ {"fingerprint" (passive inference), "nuclei", "routersploit"}.
+    """
+    if ctx is None or not cve:
+        return
+    cves = ctx.setdefault("cves", {})
+    cves.setdefault(cve.upper(), set()).add(method)
+
+
 def match_fingerprint(blob: str) -> list[Finding]:
     """Return CVE Findings whose pattern matches the fingerprint ``blob``."""
     if not blob.strip():

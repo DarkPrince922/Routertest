@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from ..cve_db import match_fingerprint
+from ..cve_db import match_fingerprint, record_cve
 from ..models import Finding, Severity
 from ..runtime import get_config
 from ._common import ToolNotFound, run_cmd
@@ -50,8 +50,11 @@ async def snmp_stage(target: str, ctx: dict | None = None) -> list[Finding]:
             findings.append(Finding(
                 "snmp", Severity.INFO, f"🧭 Модель (SNMP): {sysdescr[:160]}",
                 {"sysDescr": sysdescr[:300]}))
-            # The sysDescr often reveals model/firmware → check it for CVEs too.
-            findings.extend(match_fingerprint(sysdescr.lower()))
+            # The sysDescr often reveals model/firmware → check it for CVEs too
+            # (passive inference; the verify stage re-checks these actively).
+            for cve_finding in match_fingerprint(sysdescr.lower()):
+                findings.append(cve_finding)
+                record_cve(ctx, cve_finding.detail.get("cve"), "fingerprint")
             # sysDescr is the most precise model source — enrich the shared ctx.
             if ctx is not None:
                 ctx["model"] = sysdescr[:160]
