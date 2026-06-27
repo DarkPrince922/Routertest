@@ -62,39 +62,52 @@ async def verify_stage(target: str, ctx: dict | None = None) -> list[Finding]:
         else:
             findings.append(Finding(
                 "verify", Severity.INFO,
-                f"ℹ️ {cve}: только по фингерпринту, активная перепроверка недоступна "
-                "(нет nuclei-шаблона)",
+                f"ℹ️ {cve}: найден только по фингерпринту; у nuclei нет шаблона "
+                "именно для этого CVE — перепроверить нечем "
+                "(это не значит, что шаблоны не установлены)",
                 {"cve": cve, "methods": sorted(methods), "status": "unverified"}))
     return findings
+
+
+async def _template_exists(cve: str) -> bool:
+    """Ask nuclei whether a template with this CVE id is installed (-tl filter)."""
+    try:
+        _, stdout, _ = await run_cmd(
+            ["nuclei", "-tl", "-id", cve, "-silent"], timeout=30.0)
+    except ToolNotFound:
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+    return any(line.strip() for line in stdout.splitlines())
 
 
 async def _nuclei_recheck(urls: list[str], cve: str) -> tuple[bool, bool]:
     """Run just the ``cve`` nuclei template. Returns ``(matched, ran)``.
 
-    ``ran`` is False when no template with that id exists (nothing to verify with).
+    ``ran`` is False only when no template with that exact CVE id is installed
+    (determined definitively via ``-tl``), so the message can't be confused with
+    "templates not installed at all".
     """
+    if not await _template_exists(cve):
+        return False, False
+
     cmd = ["nuclei", "-jsonl", "-silent", "-timeout", "5", "-id", cve]
     for url in urls:
         cmd += ["-u", url]
     try:
         async with heavy_semaphore():
-            _, stdout, stderr = await run_cmd(cmd, timeout=VERIFY_TIMEOUT)
+            _, stdout, _ = await run_cmd(cmd, timeout=VERIFY_TIMEOUT)
     except ToolNotFound:
         return False, False
     except Exception:  # noqa: BLE001
-        return False, False
+        return False, True  # template exists but the run errored
 
     for line in stdout.splitlines():
         line = line.strip()
-        if not line:
-            continue
-        try:
-            json.loads(line)
-            return True, True  # a match for this CVE id
-        except json.JSONDecodeError:
-            continue
-
-    low = stderr.lower()
-    no_template = ("no templates" in low or "could not find" in low
-                   or "no valid templates" in low)
-    return False, (not no_template)
+        if line:
+            try:
+                json.loads(line)
+                return True, True  # a match for this CVE id
+            except json.JSONDecodeError:
+                continue
+    return False, True  # template ran, no match → likely false positive
