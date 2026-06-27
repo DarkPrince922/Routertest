@@ -72,6 +72,7 @@ async def main() -> None:
         port_scanner=port_scanner,
         masscan_rate=settings.masscan_rate,
         nuclei_tags=settings.nuclei_tags,
+        heavy_tool_limit=settings.heavy_tool_limit,
     ))
 
     bot = Bot(

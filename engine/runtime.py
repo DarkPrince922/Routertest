@@ -7,6 +7,7 @@ settings and calls :func:`configure` once at startup; stages read it via
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 
@@ -31,6 +32,9 @@ class EngineConfig:
     # nuclei template tag filter. Empty = run the full template set (most
     # thorough). Set e.g. "router,iot,cve,default-login,exposure" to speed it up.
     nuclei_tags: str = ""
+    # Max heavy tools (nuclei/routersploit) running at once, regardless of
+    # MAX_CONCURRENT. Bounds RAM/CPU so high concurrency doesn't OOM the box.
+    heavy_tool_limit: int = 2
     # SNMP community strings to test (default/weak).
     snmp_communities: tuple[str, ...] = ("public", "private", "admin")
 
@@ -45,6 +49,20 @@ def configure(config: EngineConfig) -> None:
 
 def get_config() -> EngineConfig:
     return _config
+
+
+_heavy_sem: asyncio.Semaphore | None = None
+
+
+def heavy_semaphore() -> asyncio.Semaphore:
+    """Process-wide limit on concurrent heavy tools (nuclei/routersploit).
+
+    Lazily created inside the running event loop; sized from ``heavy_tool_limit``.
+    """
+    global _heavy_sem
+    if _heavy_sem is None:
+        _heavy_sem = asyncio.Semaphore(max(1, _config.heavy_tool_limit))
+    return _heavy_sem
 
 
 def set_proxy(proxy: str | None) -> None:

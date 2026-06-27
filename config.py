@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     masscan_rate: int = 5000
     # nuclei tag filter; empty = full template set (most thorough).
     nuclei_tags: str = ""
+    # Max heavy tools (nuclei/routersploit) running at once (bounds RAM/CPU).
+    heavy_tool_limit: int = 2
 
     @field_validator("admin_ids", mode="before")
     @classmethod

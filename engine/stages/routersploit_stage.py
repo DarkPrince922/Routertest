@@ -20,7 +20,7 @@ import ssl
 import urllib.request
 
 from ..models import Finding, Severity
-from ..runtime import get_config
+from ..runtime import get_config, heavy_semaphore
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,16 @@ DEFAULT_HTTP_CREDS = [
 
 async def routersploit_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     """Credential checks (rsf FTP/SSH/Telnet + built-in HTTP Basic) and, when a
-    vendor was detected upstream, vendor-specific routersploit exploit checks."""
+    vendor was detected upstream, vendor-specific routersploit exploit checks.
+
+    Held under the heavy-tool semaphore so high MAX_CONCURRENT doesn't overload
+    the box with many parallel routersploit/nuclei runs.
+    """
+    async with heavy_semaphore():
+        return await _routersploit_work(target, ctx)
+
+
+async def _routersploit_work(target: str, ctx: dict | None) -> list[Finding]:
     findings: list[Finding] = []
     default_only = get_config().rsf_default_only
 

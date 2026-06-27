@@ -7,7 +7,7 @@ import logging
 import socket
 
 from ..models import Finding, normalize_severity
-from ..runtime import get_config
+from ..runtime import get_config, heavy_semaphore
 from ._common import ToolNotFound, run_cmd
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,9 @@ async def nuclei_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     if proxy:
         cmd += ["-proxy", proxy]
     try:
-        rc, stdout, stderr = await run_cmd(cmd, timeout=NUCLEI_TIMEOUT)
+        # Bound concurrent nuclei runs so high MAX_CONCURRENT doesn't OOM the box.
+        async with heavy_semaphore():
+            rc, stdout, stderr = await run_cmd(cmd, timeout=NUCLEI_TIMEOUT)
     except ToolNotFound:
         return [Finding("nuclei", normalize_severity("info"), "nuclei not installed",
                         {"error": "nuclei binary not found on PATH"})]

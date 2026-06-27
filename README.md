@@ -314,6 +314,12 @@ are tuned for a balance of speed and coverage on routers:
 - **Concurrency** — `MAX_CONCURRENT` in `.env` (default **6**) sets how many
   targets scan in parallel. This is the main lever for TXT batch lists. Raise it
   for more throughput (costs CPU/RAM/network); lower it on a small box.
+- **`HEAVY_TOOL_LIMIT`** (default **2**) caps how many heavy tools
+  (nuclei/routersploit) run at once, **independently of `MAX_CONCURRENT`**. nuclei
+  with the full template set is memory-hungry, so without this a high
+  `MAX_CONCURRENT` can OOM-kill the service. Keep it at 1–2 on a small VPS; raise
+  it on a big box. (If the service crashes/restarts at higher concurrency, this —
+  or more RAM — is the fix; check `journalctl -u pentest-bot` / `dmesg` for OOM.)
 - **nmap** — scans ~30 router/CPE-relevant ports (`ROUTER_PORTS` in
   `engine/stages/nmap_stage.py`, incl. MikroTik Winbox 8291, TR-069 7547, common
   mgmt/alt-HTTP ports) instead of nmap's default 1000, with `-T4` and a
