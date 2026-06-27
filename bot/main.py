@@ -70,6 +70,7 @@ async def main() -> None:
         rsf_default_only=rsf_default_only,
         skip_unknown=skip_unknown,
         port_scanner=port_scanner,
+        masscan_rate=settings.masscan_rate,
     ))
 
     bot = Bot(

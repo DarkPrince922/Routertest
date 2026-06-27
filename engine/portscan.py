@@ -17,7 +17,10 @@ import socket
 log = logging.getLogger(__name__)
 
 MASSCAN_TIMEOUT = 180.0
-DEFAULT_RATE = "1000"
+DEFAULT_RATE = "5000"
+# Seconds masscan waits for late replies after sending (default is 10 — too long
+# for a short port list on a local target).
+MASSCAN_WAIT = "2"
 # masscan prints "Discovered open port 80/tcp on 192.168.1.1" to stdout per hit.
 _OPEN_RE = re.compile(r"Discovered open port (\d+)/tcp", re.IGNORECASE)
 
@@ -49,7 +52,7 @@ async def masscan_ports(target: str, ports_csv: str, rate: str = DEFAULT_RATE
     # Lazy import avoids a circular import (stages -> nmap_stage -> portscan).
     from .stages._common import ToolNotFound, run_cmd
 
-    cmd = ["masscan", ip, "-p", ports_csv, "--rate", rate, "--wait", "3"]
+    cmd = ["masscan", ip, "-p", ports_csv, "--rate", rate, "--wait", MASSCAN_WAIT]
     try:
         rc, stdout, stderr = await run_cmd(cmd, timeout=MASSCAN_TIMEOUT)
     except ToolNotFound:

@@ -67,14 +67,12 @@ async def nmap_stage(target: str) -> list[Finding]:
     open_ports: list[int] = []
 
     # --- 1. masscan fast path ------------------------------------------------
-    scanner = get_config().port_scanner
+    cfg = get_config()
+    scanner = cfg.port_scanner
     use_masscan = scanner in ("auto", "masscan") and masscan_available()
     if use_masscan:
-        mports, merr = await masscan_ports(target, ROUTER_PORTS)
-        if not mports and scanner in ("auto", "masscan"):
-            # widen to top router+common ports before giving up
-            mports, merr = await masscan_ports(target, "1-65535"
-                                               if scanner == "masscan" else ROUTER_PORTS)
+        # Scan the same short router-port list as nmap (fast). No all-ports sweep.
+        mports, merr = await masscan_ports(target, ROUTER_PORTS, str(cfg.masscan_rate))
         if mports:
             open_ports = mports
             # Enrich with nmap -sV on just the open ports (best-effort).
@@ -84,11 +82,11 @@ async def nmap_stage(target: str) -> list[Finding]:
                 port_findings, products, services, os_info, open_ports = enriched
             else:
                 port_findings = [_bare_port_finding(p) for p in mports]
-        elif merr:
-            log.info("masscan unusable (%s) — falling back to nmap", merr)
-            use_masscan = False
         else:
-            use_masscan = False  # masscan ran but found nothing → try nmap too
+            # masscan found nothing (or couldn't run) — fall back to the nmap path.
+            if merr:
+                log.info("masscan unusable (%s) — falling back to nmap", merr)
+            use_masscan = False
 
     # --- 2. nmap path (default / fallback) -----------------------------------
     if not open_ports and not use_masscan:

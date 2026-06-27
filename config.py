@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     skip_unknown: bool = False
     # Port-discovery engine: auto | masscan | nmap.
     port_scanner: str = "auto"
+    # masscan packets-per-second (higher = faster, more aggressive).
+    masscan_rate: int = 5000
 
     @field_validator("admin_ids", mode="before")
     @classmethod
