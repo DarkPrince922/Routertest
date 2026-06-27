@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import time
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -447,6 +448,9 @@ async def stop_batch(query: CallbackQuery, callback_data: JobCB, engine: Engine)
         show_alert=bool(cancelled))
 
 
+# Min seconds between throttled batch message edits (Telegram rate limit).
+_BATCH_RENDER_INTERVAL = 2.0
+
 # Compact "doing now" labels for the batch aggregate view.
 _BATCH_DOING = {
     "nmap": "сканирую порты",
@@ -480,10 +484,17 @@ class _BatchTracker:
         self._total: int | None = None   # accepted count, set on finalize
         self._active: dict[int, str] = {}  # job_id -> current status line
         self._device: dict[int, str] = {}  # job_id -> detected model
+        self.discovering: bool = False    # True while a subnet sweep is running
+        self._last_render: float = 0.0
 
     @property
     def job_ids(self) -> list[int]:
         return self._control.job_ids
+
+    async def touch(self) -> None:
+        """Re-render (throttled) — used to reflect discovery progress live."""
+        async with self._lock:
+            await self._render()
 
     # ---- live per-job events -------------------------------------------------
     async def on_progress(self, job: ScanJob, stage: str, idx: int, total: int) -> None:
@@ -522,7 +533,8 @@ class _BatchTracker:
         async with self._lock:
             self._total = accepted
             self._rejected = rejected
-            await self._render()
+            self.discovering = False
+            await self._render(force=True)
 
     # ---- rendering -----------------------------------------------------------
     def _line(self, job: ScanJob, doing: str) -> str:
@@ -530,7 +542,7 @@ class _BatchTracker:
         dev_tag = f" · 🧭 {esc(dev)}" if dev else ""
         return f"<code>{esc(job.target)}</code>{dev_tag} — {doing}"
 
-    async def _render(self) -> None:
+    async def _render(self, force: bool = False) -> None:
         done = len(self._results)
         complete = self._total is not None and done >= self._total
         if complete:
@@ -542,12 +554,22 @@ class _BatchTracker:
             )
             return
 
-        total = "?" if self._total is None else self._total
+        # Throttle intermediate edits (Telegram rate limit) — always render the
+        # final/complete state above, but coalesce the noisy ones.
+        now = time.monotonic()
+        if not force and now - self._last_render < _BATCH_RENDER_INTERVAL:
+            return
+        self._last_render = now
+
+        queued = len(self._control.job_ids)
         profile_ru = PROFILE_RU.get(self._profile.value, self._profile.value)
-        lines = [
-            f"📋 <b>Пакетный скан</b> · профиль: {profile_ru}",
-            f"Готово: {done}/{total}",
-        ]
+        lines = [f"📋 <b>Пакетный скан</b> · профиль: {profile_ru}"]
+        if self.discovering:
+            lines.append(f"🔎 Поиск живых хостов… найдено: <b>{queued}</b>, "
+                         f"просканировано: {done}")
+        else:
+            total = "?" if self._total is None else self._total
+            lines.append(f"Готово: {done}/{total}")
         if self._active:
             lines.append("▶️ Сейчас:")
             for status in list(self._active.values())[:5]:
@@ -592,6 +614,8 @@ async def _launch_targets(message: Message, tokens: list[str], profile: ScanProf
             rejected.append((target, job.error or "вне scope"))
         else:
             control.job_ids.append(job.id)
+            # Reflect discovery progress live (throttled inside the tracker).
+            await tracker.touch()
 
     # Direct hosts first.
     for host in hosts:
@@ -600,6 +624,8 @@ async def _launch_targets(message: Message, tokens: list[str], profile: ScanProf
         await add(host)
 
     # Then sweep each subnet, queuing live hosts as they stream in.
+    if cidrs:
+        tracker.discovering = True
     for cidr in cidrs:
         if control.stopped:
             break
@@ -613,6 +639,7 @@ async def _launch_targets(message: Message, tokens: list[str], profile: ScanProf
             await task
         except asyncio.CancelledError:
             break
+    tracker.discovering = False
 
     if not control.job_ids:
         note = ("остановлено" if control.stopped

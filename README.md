@@ -171,8 +171,9 @@ sudo journalctl -u pentest-bot -f
     `192.168.0.0/24, 192.168.4.0/24, 10.0.0.5`). Each subnet is authorized against
     scope, ping-swept (`nmap -sn`), and **each live host is queued the moment it's
     found** — scanning starts immediately, in parallel with the rest of the sweep
-    (dead hosts skipped). Discovery allows up to a /16; per-input target ceiling
-    is 65536 (effectively unlimited for normal use).
+    (dead hosts skipped). The message shows discovery progress live
+    (`🔎 Поиск живых хостов… найдено: N, просканировано: k`). Discovery allows up
+    to a /16; per-input target ceiling is 65536 (effectively unlimited).
   - **Single target**: one message grows into a live, human-readable narrative —
     `⏳ В очереди → 🔍 Сканирую порты и определяю устройство → 🧭 Определено
     устройство: MikroTik RouterOS → 🧪 Проверяю уязвимости → 🔑 …` — then is
