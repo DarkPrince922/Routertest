@@ -10,11 +10,35 @@
 #     title:    short human description
 #     reference: URL
 cves:
-  - match: "routeros|mikrotik|rosssh"
+  - match: "routeros|mikrotik|rosssh|winbox"
     cve: "CVE-2018-14847"
     severity: high
     title: "MikroTik RouterOS Winbox path traversal — unauth credential disclosure (RouterOS < 6.42)"
     reference: "https://nvd.nist.gov/vuln/detail/CVE-2018-14847"
+
+  - match: "routeros|mikrotik|winbox"
+    cve: "CVE-2023-30799"
+    severity: critical
+    title: "MikroTik RouterOS privilege escalation to super-admin via Winbox/REST (RouterOS < 6.49.7)"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2023-30799"
+
+  - match: "routeros|mikrotik|winbox"
+    cve: "CVE-2019-3924"
+    severity: high
+    title: "MikroTik RouterOS Winbox unauthenticated in-window proxy / request forgery"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2019-3924"
+
+  - match: "gpon|dasan"
+    cve: "CVE-2018-10561"
+    severity: critical
+    title: "Dasan GPON home router authentication bypass + command injection (CVE-2018-10561/10562)"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2018-10561"
+
+  - match: "asuswrt|asus"
+    cve: "CVE-2018-5999"
+    severity: high
+    title: "ASUS routers (asuswrt) authenticated/format-string and related RCE issues"
+    reference: "https://nvd.nist.gov/vuln/detail/CVE-2018-5999"
 
   - match: "rompager"
     cve: "CVE-2014-9222"

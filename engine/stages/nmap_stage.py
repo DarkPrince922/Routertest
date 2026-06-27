@@ -110,14 +110,33 @@ async def nmap_stage(target: str) -> list[Finding]:
         except Exception:  # noqa: BLE001
             banners = {}
 
+    # Vendor hints from characteristic open ports (works even when -sV is
+    # blocked and there are no service banners — e.g. MikroTik Winbox 8291).
+    hints = _port_hints(open_ports)
+
     findings: list[Finding] = list(port_findings)
-    findings.append(_fingerprint_finding(products, services, os_info, banners))
+    findings.append(_fingerprint_finding(products, services, os_info, banners, hints))
     # Version-aware CVE hits from the curated KB against the whole fingerprint.
-    findings.extend(match_fingerprint(_blob(products, services, os_info, banners)))
+    findings.extend(match_fingerprint(_blob(products, services, os_info, banners, hints)))
 
     if not findings:
         findings.append(Finding("nmap", Severity.INFO, "no open ports found", {}))
     return findings
+
+
+# Characteristic ports that strongly imply a vendor/platform even with no banner.
+PORT_VENDOR_HINTS = {
+    8291: "mikrotik routeros winbox",
+    8728: "mikrotik routeros api",
+    8729: "mikrotik routeros api-ssl",
+    7547: "tr-069 cwmp cpe broadband",
+    52869: "rompager upnp",   # Misfortune Cookie-era CPE
+    49152: "upnp cpe",
+}
+
+
+def _port_hints(open_ports: list[int]) -> str:
+    return " ".join(PORT_VENDOR_HINTS[p] for p in open_ports if p in PORT_VENDOR_HINTS)
 
 
 def _bare_port_finding(port: int) -> Finding:
@@ -238,13 +257,15 @@ def _parse_os(host: ET.Element) -> dict:
     return best
 
 
-def _blob(products: list[str], services: list[str], os_info: dict, banners: dict) -> str:
+def _blob(products: list[str], services: list[str], os_info: dict, banners: dict,
+          hints: str = "") -> str:
     """Combined lowercase fingerprint text used for classification + CVE match."""
     return " ".join(products + services + [
         os_info.get("vendor", ""), os_info.get("osfamily", ""),
         os_info.get("os_name", ""),
         banners.get("http_server", ""), banners.get("http_title", ""),
         banners.get("ssh_banner", ""), banners.get("telnet_banner", ""),
+        hints,
     ]).lower()
 
 
@@ -255,8 +276,8 @@ def _firmware(os_info: dict, banners: dict) -> str:
 
 
 def _fingerprint_finding(products: list[str], services: list[str], os_info: dict,
-                         banners: dict) -> Finding:
-    verdict, label, confidence = _classify(products, services, os_info, banners)
+                         banners: dict, hints: str = "") -> Finding:
+    verdict, label, confidence = _classify(products, services, os_info, banners, hints)
     icon = {"router": "🧭", "not_router": "🚫", "unknown": "❔"}[verdict]
     return Finding(
         stage="fingerprint",
@@ -281,12 +302,12 @@ def _fingerprint_finding(products: list[str], services: list[str], os_info: dict
 
 
 def _classify(products: list[str], services: list[str], os_info: dict,
-              banners: dict) -> tuple[str, str, str]:
+              banners: dict, hints: str = "") -> tuple[str, str, str]:
     """Return (verdict, human_label, confidence).
 
     verdict ∈ {"router", "not_router", "unknown"}.
     """
-    blob = _blob(products, services, os_info, banners)
+    blob = _blob(products, services, os_info, banners, hints)
     # Prefer a concrete name from banners (model/title) over the nmap OS guess.
     best_name = (banners.get("http_title") or os_info.get("os_name")
                  or banners.get("http_server") or os_info.get("vendor"))

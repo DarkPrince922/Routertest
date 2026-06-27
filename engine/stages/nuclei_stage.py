@@ -41,10 +41,20 @@ async def nuclei_stage(target: str) -> list[Finding]:
         findings.append(_parse_nuclei_event(obj))
 
     if not findings:
-        findings.append(
-            Finding("nuclei", normalize_severity("info"), "no nuclei matches",
-                    {"returncode": rc, "stderr": stderr[:300]})
-        )
+        low = stderr.lower()
+        if ("no templates" in low or "could not find any" in low
+                or "templates directory" in low or "no valid templates" in low):
+            # The usual cause of "nuclei finds nothing": templates aren't
+            # installed. Make it loud so the operator fixes it.
+            findings.append(Finding(
+                "nuclei", normalize_severity("medium"),
+                "⚠️ nuclei: шаблоны не установлены — запустите "
+                "`nuclei -update-templates` (иначе уязвимости не ищутся)",
+                {"stderr": stderr[:300]}))
+        else:
+            findings.append(
+                Finding("nuclei", normalize_severity("info"), "no nuclei matches",
+                        {"returncode": rc, "stderr": stderr[:300]}))
     return findings
 
 

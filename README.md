@@ -218,6 +218,12 @@ The **nmap** stage also grabs HTTP `Server`/`<title>` and SSH/Telnet banners to
 sharpen the model/firmware fingerprint, and matches the detected firmware against
 a curated offline CVE list (`engine/data/router_cves.yaml`) for well-known router
 bugs (MikroTik Winbox, RomPager "Misfortune Cookie", Huawei HG532, etc.). The
+vendor is also inferred from **characteristic open ports** (e.g. Winbox 8291 →
+MikroTik, TR-069 7547 → CPE), so a device is fingerprinted and its known CVEs
+flagged even when `-sV` is blocked and there are no service banners. This curated
+list is intentionally small — **nuclei provides the bulk of CVE coverage, so keep
+its templates updated** (`nuclei -update-templates`); if they're missing, the
+nuclei stage now says so in the results. The
 **snmp** stage checks default community strings (`public`/`private`/…) on UDP 161
 — a readable community is a high-severity finding and also feeds CVE matching.
 Both feed the immediate 🚨 vulnerable-router alert.
