@@ -29,6 +29,11 @@ class EngineConfig:
     # masscan packets-per-second. Higher = faster but more aggressive; cheap
     # routers may drop replies if it's too high.
     masscan_rate: int = 5000
+    # Subnet liveness sweep: "auto" (masscan if installed, else nmap), "masscan"
+    # (fast TCP sweep — also finds ICMP-blocking routers), or "nmap" (-sn ping).
+    discovery_method: str = "auto"
+    # masscan rate for the liveness sweep (many hosts at once → higher default).
+    discovery_rate: int = 20000
     # nuclei template tag filter. Empty = run the full template set (most
     # thorough). Set e.g. "router,iot,cve,default-login,exposure" to speed it up.
     nuclei_tags: str = ""
@@ -81,3 +86,8 @@ def set_skip_unknown(enabled: bool) -> None:
 def set_port_scanner(value: str) -> None:
     if value in ("auto", "masscan", "nmap"):
         _config.port_scanner = value
+
+
+def set_discovery_method(value: str) -> None:
+    if value in ("auto", "masscan", "nmap"):
+        _config.discovery_method = value

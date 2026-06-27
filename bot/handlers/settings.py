@@ -41,6 +41,7 @@ def _view_text(store: Store) -> str:
         f"🔑 routersploit: {esc(rsf)}",
         f"🧭 Неизвестные устройства: {esc(unknown)}",
         f"🛰 Сканер портов: {esc(cfg.port_scanner)}",
+        f"🔎 Поиск живых: {esc(cfg.discovery_method)}",
     ]
     if interrupted:
         lines.append(f"♻️ Прерванных сканов: <b>{interrupted}</b>")
@@ -52,7 +53,8 @@ async def _show(query: CallbackQuery, store: Store) -> None:
     await safe_edit(query, _view_text(store),
                     keyboards.settings_menu(cfg.proxy, cfg.rsf_default_only,
                                             store.count_interrupted(),
-                                            cfg.skip_unknown, cfg.port_scanner))
+                                            cfg.skip_unknown, cfg.port_scanner,
+                                            cfg.discovery_method))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -93,7 +95,7 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
         sent, _view_text(store),
         keyboards.settings_menu(value, cfg.rsf_default_only,
                                 store.count_interrupted(), cfg.skip_unknown,
-                                cfg.port_scanner))
+                                cfg.port_scanner, cfg.discovery_method))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -134,6 +136,15 @@ async def cycle_scanner(query: CallbackQuery, store: Store) -> None:
     store.set_setting("port_scanner", new_value)
     await _show(query, store)
     await query.answer(f"Сканер портов: {new_value}")
+
+
+@router.callback_query(SettingsCB.filter(F.action == "discovery_cycle"))
+async def cycle_discovery(query: CallbackQuery, store: Store) -> None:
+    new_value = _SCANNER_CYCLE.get(runtime.get_config().discovery_method, "auto")
+    runtime.set_discovery_method(new_value)
+    store.set_setting("discovery_method", new_value)
+    await _show(query, store)
+    await query.answer(f"Поиск живых: {new_value}")
 
 
 # ---------------------------------------------------------- resume interrupted

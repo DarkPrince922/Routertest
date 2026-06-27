@@ -327,6 +327,11 @@ are tuned for a balance of speed and coverage on routers:
   add a port) if you need a service on an unusual port.
 - **Router skip** — non-routers skip nuclei/routersploit automatically, saving
   the bulk of the time on irrelevant hosts.
+- **Subnet liveness sweep** — `DISCOVERY_METHOD` (auto/masscan/nmap, also
+  switchable in ⚙️ Настройки → 🔎). `masscan` (default when installed) is much
+  faster than `nmap -sn` on large ranges **and** finds routers that block ICMP
+  ping (it probes common router TCP ports instead). `DISCOVERY_RATE` tunes the
+  masscan sweep rate.
 
 ## Troubleshooting
 

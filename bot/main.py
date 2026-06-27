@@ -65,6 +65,7 @@ async def main() -> None:
     db_skip = store.get_setting("skip_unknown")
     skip_unknown = (db_skip == "true") if db_skip is not None else settings.skip_unknown
     port_scanner = store.get_setting("port_scanner", settings.port_scanner) or "auto"
+    discovery_method = store.get_setting("discovery_method", settings.discovery_method) or "auto"
     configure(EngineConfig(
         proxy=(db_proxy or None),
         rsf_default_only=rsf_default_only,
@@ -73,6 +74,8 @@ async def main() -> None:
         masscan_rate=settings.masscan_rate,
         nuclei_tags=settings.nuclei_tags,
         heavy_tool_limit=settings.heavy_tool_limit,
+        discovery_method=discovery_method,
+        discovery_rate=settings.discovery_rate,
     ))
 
     bot = Bot(

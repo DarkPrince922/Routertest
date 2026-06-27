@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     port_scanner: str = "auto"
     # masscan packets-per-second (higher = faster, more aggressive).
     masscan_rate: int = 5000
+    # Subnet liveness sweep: auto | masscan | nmap.
+    discovery_method: str = "auto"
+    # masscan rate for the liveness sweep (many hosts → higher default).
+    discovery_rate: int = 20000
     # nuclei tag filter; empty = full template set (most thorough).
     nuclei_tags: str = ""
     # Max heavy tools (nuclei/routersploit) running at once (bounds RAM/CPU).
