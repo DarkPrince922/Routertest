@@ -79,6 +79,24 @@ def heavy_semaphore() -> asyncio.Semaphore:
     return _heavy_sem
 
 
+_masscan_lock: asyncio.Lock | None = None
+
+
+def masscan_lock() -> asyncio.Lock:
+    """Process-wide lock serializing ALL masscan runs.
+
+    masscan uses a raw socket and its own pcap capture of the interface; two
+    masscan processes running at once on the same machine swallow each other's
+    reply packets and stall. So every masscan invocation — the subnet discovery
+    sweep and each per-host port scan — takes this lock, guaranteeing only one
+    masscan runs at a time. Without it, a subnet scan with >1 worker deadlocks at
+    the port-scanning stage (discovery masscan vs. per-host masscan)."""
+    global _masscan_lock
+    if _masscan_lock is None:
+        _masscan_lock = asyncio.Lock()
+    return _masscan_lock
+
+
 def set_proxy(proxy: str | None) -> None:
     """Update the outbound proxy live (used by the in-bot settings screen)."""
     _config.proxy = proxy or None

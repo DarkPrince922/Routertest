@@ -51,10 +51,13 @@ async def masscan_ports(target: str, ports_csv: str, rate: str = DEFAULT_RATE
 
     # Lazy import avoids a circular import (stages -> nmap_stage -> portscan).
     from .stages._common import ToolNotFound, run_cmd
+    from .runtime import masscan_lock
 
     cmd = ["masscan", ip, "-p", ports_csv, "--rate", rate, "--wait", MASSCAN_WAIT]
     try:
-        rc, stdout, stderr = await run_cmd(cmd, timeout=MASSCAN_TIMEOUT)
+        # Only one masscan may run at a time (raw socket / pcap collision).
+        async with masscan_lock():
+            rc, stdout, stderr = await run_cmd(cmd, timeout=MASSCAN_TIMEOUT)
     except ToolNotFound:
         return [], "masscan не установлен"
 

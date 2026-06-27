@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from xml.etree import ElementTree as ET
 
 from .portscan import masscan_available
-from .runtime import get_config
+from .runtime import get_config, masscan_lock
 from .stages._common import ToolNotFound, run_cmd
 
 log = logging.getLogger(__name__)
@@ -102,43 +102,47 @@ async def _stream_masscan(cidr: str, total: int, on_host: HostCallback
     argv = ["masscan", cidr, "-p", DISCOVERY_PORTS, "--rate", rate, "--wait", "2"]
     if shutil.which("stdbuf"):
         argv = ["stdbuf", "-oL", *argv]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    except FileNotFoundError:
-        return 0, "masscan не установлен"
+    # Hold the global masscan lock for the whole sweep: a per-host port-scan
+    # masscan (started for a live host found mid-sweep) must NOT run concurrently
+    # with this one, or both stall on the shared raw socket / pcap.
+    async with masscan_lock():
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        except FileNotFoundError:
+            return 0, "masscan не установлен"
 
-    seen: set[str] = set()
-    try:
-        while True:
-            raw = await proc.stdout.readline()
-            if not raw:
-                break
-            m = _MASSCAN_OPEN_RE.search(raw.decode("utf-8", errors="replace"))
-            if m:
-                ip = m.group(1).strip()
-                if ip and ip not in seen:
-                    seen.add(ip)
-                    await on_host(ip)
-        await proc.wait()
-        err = None
-        if not seen:
-            stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").lower()
-            if any(k in stderr for k in ("permission", "denied", "fail", "must be")):
-                err = "masscan не смог запуститься (нужен root/CAP_NET_RAW)"
-        return len(seen), err
-    except asyncio.CancelledError:
-        with _suppress_proc_errors():
-            proc.kill()
-        raise
-    except Exception as exc:  # noqa: BLE001
-        with _suppress_proc_errors():
-            proc.kill()
-        return len(seen), f"ошибка discovery: {exc}"
-    finally:
-        if proc.returncode is None:
+        seen: set[str] = set()
+        try:
+            while True:
+                raw = await proc.stdout.readline()
+                if not raw:
+                    break
+                m = _MASSCAN_OPEN_RE.search(raw.decode("utf-8", errors="replace"))
+                if m:
+                    ip = m.group(1).strip()
+                    if ip and ip not in seen:
+                        seen.add(ip)
+                        await on_host(ip)
+            await proc.wait()
+            err = None
+            if not seen:
+                stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").lower()
+                if any(k in stderr for k in ("permission", "denied", "fail", "must be")):
+                    err = "masscan не смог запуститься (нужен root/CAP_NET_RAW)"
+            return len(seen), err
+        except asyncio.CancelledError:
             with _suppress_proc_errors():
                 proc.kill()
+            raise
+        except Exception as exc:  # noqa: BLE001
+            with _suppress_proc_errors():
+                proc.kill()
+            return len(seen), f"ошибка discovery: {exc}"
+        finally:
+            if proc.returncode is None:
+                with _suppress_proc_errors():
+                    proc.kill()
 
 
 async def _stream_nmap(cidr: str, total: int, on_host: HostCallback
