@@ -27,8 +27,10 @@ async def nuclei_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     """
     urls = await asyncio.to_thread(_build_targets, target)
 
-    cmd = ["nuclei", "-jsonl", "-silent", "-timeout", "5"]
-    tags = get_config().nuclei_tags.strip()
+    cfg = get_config()
+    cmd = ["nuclei", "-jsonl", "-silent", "-timeout", "5",
+           "-c", str(cfg.nuclei_concurrency)]
+    tags = cfg.nuclei_tags.strip()
     if tags:
         cmd += ["-tags", tags]
     for url in urls:

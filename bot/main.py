@@ -73,6 +73,8 @@ async def main() -> None:
         port_scanner=port_scanner,
         masscan_rate=settings.masscan_rate,
         nuclei_tags=settings.nuclei_tags,
+        nuclei_concurrency=settings.nuclei_concurrency,
+        nmap_fast=settings.nmap_fast,
         heavy_tool_limit=settings.heavy_tool_limit,
         discovery_method=discovery_method,
         discovery_rate=settings.discovery_rate,

@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     discovery_rate: int = 20000
     # nuclei tag filter; empty = full template set (most thorough).
     nuclei_tags: str = ""
+    # nuclei template concurrency (-c); higher = faster, more CPU/RAM.
+    nuclei_concurrency: int = 50
+    # Fast nmap: skip -O and use light version detection.
+    nmap_fast: bool = True
     # Max heavy tools (nuclei/routersploit) running at once (bounds RAM/CPU).
     heavy_tool_limit: int = 2
 

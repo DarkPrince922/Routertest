@@ -325,6 +325,14 @@ are tuned for a balance of speed and coverage on routers:
   mgmt/alt-HTTP ports) instead of nmap's default 1000, with `-T4` and a
   `--host-timeout` so dead IPs in a list return fast. Widen `ROUTER_PORTS` (or
   add a port) if you need a service on an unusual port.
+- **Per-host scan speed** — the two time sinks are nmap and nuclei:
+  - **`NMAP_FAST`** (default **true**) skips slow OS detection (`-O`) and uses
+    light version probes; device type still comes from ports/banners/SNMP. Set
+    `false` for full `-sV -O`.
+  - **`NUCLEI_TAGS`** is the biggest nuclei lever — empty runs ALL templates
+    (thorough, slow); a tag list (e.g. `router,iot,cve,default-login,exposure,
+    panel,misconfig`) is much faster. **`NUCLEI_CONCURRENCY`** (`-c`, default 50)
+    speeds a single run at the cost of CPU/RAM.
 - **Router skip** — non-routers skip nuclei/routersploit automatically, saving
   the bulk of the time on irrelevant hosts.
 - **Subnet liveness sweep** — `DISCOVERY_METHOD` (auto/masscan/nmap, also

@@ -37,6 +37,11 @@ class EngineConfig:
     # nuclei template tag filter. Empty = run the full template set (most
     # thorough). Set e.g. "router,iot,cve,default-login,exposure" to speed it up.
     nuclei_tags: str = ""
+    # nuclei template concurrency (-c). Higher = faster, more CPU/RAM.
+    nuclei_concurrency: int = 50
+    # Fast nmap: skip slow OS detection (-O) and use light version detection.
+    # Device type still comes from ports/banners/SNMP. Set False for full -sV -O.
+    nmap_fast: bool = True
     # Max heavy tools (nuclei/routersploit) running at once, regardless of
     # MAX_CONCURRENT. Bounds RAM/CPU so high concurrency doesn't OOM the box.
     heavy_tool_limit: int = 2

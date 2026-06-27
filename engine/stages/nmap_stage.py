@@ -199,15 +199,23 @@ async def _run_and_parse(target: str, port_args: list[str]):
     Returns the parsed tuple, or None if nmap is missing / produced no usable
     output.
     """
+    fast = get_config().nmap_fast
     base = ["-sV", "-Pn", "-T4", "--host-timeout", NMAP_HOST_TIMEOUT,
             *port_args, "-oX", "-", target]
+    if fast:
+        # Light version detection (fewer probes) — much faster on routers.
+        base = ["--version-light", *base]
+
+    # Fast mode skips slow OS detection entirely (we fingerprint via
+    # ports/banners/SNMP anyway); full mode adds -O with a no-privilege fallback.
+    first = ["nmap", *base] if fast else ["nmap", "-O", *base]
     try:
-        _, stdout, stderr = await run_cmd(["nmap", "-O", *base], timeout=NMAP_TIMEOUT)
+        _, stdout, stderr = await run_cmd(first, timeout=NMAP_TIMEOUT)
     except ToolNotFound:
         return None
 
     # -O needs raw sockets; without privileges nmap quits before scanning.
-    if _needs_privileges(stderr) or not stdout.strip():
+    if not fast and (_needs_privileges(stderr) or not stdout.strip()):
         try:
             _, stdout, stderr = await run_cmd(["nmap", *base], timeout=NMAP_TIMEOUT)
         except ToolNotFound:
