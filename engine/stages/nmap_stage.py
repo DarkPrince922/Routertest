@@ -36,11 +36,14 @@ ROUTER_TYPES = {
     "router", "broadband router", "wap", "wireless access point",
     "gateway", "firewall", "load balancer",
 }
-# Recognized device types that are clearly NOT routers.
+# Recognized device types that are clearly NOT routers. Kept deliberately narrow:
+# nmap routinely tags embedded Linux routers as "general purpose" / "switch" /
+# "specialized" / "remote management", so those are NOT listed here — a host with
+# one of them falls through to "unknown" (scanned by default) instead of being
+# wrongly skipped as not-a-router.
 NON_ROUTER_TYPES = {
-    "general purpose", "printer", "print server", "storage-misc", "phone",
-    "webcam", "media device", "game console", "power-device", "switch",
-    "remote management", "specialized", "pbx",
+    "printer", "print server", "storage-misc", "phone", "voip phone", "voip adapter",
+    "webcam", "media device", "game console", "power-device", "pbx",
 }
 # Vendor/product banner keywords that strongly imply a router/CPE.
 ROUTER_KEYWORDS = (

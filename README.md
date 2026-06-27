@@ -198,9 +198,15 @@ sudo journalctl -u pentest-bot -f
     (`-sV -O`) and classifies the target as router / not-router / unknown
     (vendor banners + nmap `osclass`). If the target is **confidently not a
     router**, the deeper stages (nuclei/routersploit) are skipped and the job is
-    marked `SKIPPED`. Targets whose type can't be determined are, by default,
-    still scanned (OS detection often fails through `-Pn`); switch to strict mode
-    (**⚙️ Настройки → 🧭 Неизвестные: пропускать**) to skip undetermined targets too.
+    marked `SKIPPED`. The gate is deliberately conservative so a real router is
+    never dropped: a host with **any open web/admin/router-mgmt port** (80/443/
+    8080/8291/7547/…) is always fully scanned regardless of the device-type
+    guess, and ambiguous nmap labels (`general purpose`, `switch`, `specialized`,
+    `remote management` — which embedded routers routinely report) count as
+    *unknown*, not *not-router*. Targets whose type can't be determined are, by
+    default, still scanned (OS detection often fails through `-Pn`); switch to
+    strict mode (**⚙️ Настройки → 🧭 Неизвестные: пропускать**) to skip
+    undetermined targets that also expose no scannable ports.
   - **🚨 Vulnerable-router alert**: as soon as a stage produces a `high`/
     `critical` finding, the bot pushes a separate notification message
     (target + device + finding), without waiting for the whole scan to finish.

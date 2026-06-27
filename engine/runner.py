@@ -60,6 +60,14 @@ ALERT_THRESHOLD = severity_rank(Severity.HIGH)
 # Hard backstop per stage — no single tool can hang a worker longer than this.
 STAGE_TIMEOUT = 600.0
 
+# Open ports that, by themselves, make a host worth scanning regardless of the
+# nmap device-type guess (web UIs, login services, router-mgmt protocols). If any
+# of these is open, the router gate never skips the host.
+SCANNABLE_PORTS = {
+    21, 22, 23, 53, 80, 81, 88, 443, 2000, 2222, 4433, 5000, 7547, 8000, 8080,
+    8081, 8088, 8291, 8443, 8728, 8729, 8888, 9000, 9999, 10000, 49152, 52869,
+}
+
 # Stages per profile (order matters).
 PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
     ScanProfile.QUICK: [("nmap", nmap_stage)],
@@ -300,8 +308,15 @@ class Engine:
                 if name == "nmap":
                     verdict, device_label = router_verdict(findings)
                     skip_unknown = get_config().skip_unknown
-                    should_skip = (verdict == "not_router"
-                                   or (verdict == "unknown" and skip_unknown))
+                    # A host exposing a web/admin/router-mgmt port is worth scanning
+                    # regardless of nmap's device-type guess (nmap mislabels many
+                    # embedded routers). Never skip those — only skip when there is
+                    # nothing scannable open.
+                    scannable = any(p in SCANNABLE_PORTS
+                                    for p in (ctx.get("open_ports") or []))
+                    should_skip = (not scannable) and (
+                        verdict == "not_router"
+                        or (verdict == "unknown" and skip_unknown))
                     if should_skip and idx < total:
                         reason = ("Тип устройства не определён — дальнейшие стадии пропущены"
                                   if verdict == "unknown"
