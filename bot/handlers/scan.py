@@ -612,7 +612,8 @@ async def _launch_targets(message: Message, tokens: list[str], profile: ScanProf
         job = engine.enqueue(target, profile, actor_id,
                              on_progress=tracker.on_progress,
                              on_stage_done=tracker.on_stage_done,
-                             on_done=tracker.on_done, on_alert=alert)
+                             on_done=tracker.on_done, on_alert=alert,
+                             light=True)  # batch/subnet → skip heaviest stages
         if job.status.value == "REJECTED":
             rejected.append((target, job.error or "вне scope"))
         else:

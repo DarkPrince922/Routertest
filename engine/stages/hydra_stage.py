@@ -1,6 +1,10 @@
 """hydra stage — robust default/weak credential checks via THC-Hydra.
 
-More reliable than routersploit's generic creds for SSH/Telnet/FTP/HTTP-Basic.
+Scoped to SSH / Telnet / FTP, where hydra is reliable. HTTP logins are handled
+elsewhere (the built-in HTTP-Basic check in the routersploit stage, and nuclei's
+default-login templates for form logins) — hydra's http-get success/failure
+detection is unreliable on router web UIs, so it's intentionally not used here.
+
 Uses a small curated default-credential combo list (few attempts, ``-f`` stops on
 first hit) to stay fast and avoid tripping router lockouts. Set the bot's creds
 mode to "+bruteforce" to allow a larger wordlist via ``HYDRA_PASS_LIST``.
@@ -19,11 +23,10 @@ from ..runtime import get_config
 from ._common import run_cmd
 
 # Per-service wall-clock budget.
-HYDRA_TIMEOUT = 90.0
-# TCP services hydra can check directly.
+HYDRA_TIMEOUT = 45.0
+# TCP services hydra checks directly (HTTP handled by the built-in Basic check
+# and nuclei — hydra's http login detection is unreliable on router UIs).
 LOGIN_SERVICES = {22: "ssh", 23: "telnet", 21: "ftp"}
-HTTP_PORTS = [80, 8080, 8000, 8081, 8888, 81, 8090]
-HTTPS_PORTS = [443, 8443, 4433]
 PROBE_TIMEOUT = 1.2
 
 # Curated factory/weak credentials (login:password). Small on purpose.
@@ -46,24 +49,19 @@ async def hydra_stage(target: str, ctx: dict | None = None) -> list[Finding]:
 
     open_ports = set((ctx or {}).get("open_ports") or [])
     if not open_ports:
-        open_ports = await asyncio.to_thread(
-            _probe, target, list(LOGIN_SERVICES) + HTTP_PORTS + HTTPS_PORTS)
+        open_ports = await asyncio.to_thread(_probe, target, list(LOGIN_SERVICES))
+
+    services = [(p, s) for p, s in LOGIN_SERVICES.items() if p in open_ports]
+    if not services:
+        return [Finding("hydra", Severity.INFO,
+                        "hydra: SSH/Telnet/FTP не открыты — пропускаю", {})]
 
     ip = await asyncio.to_thread(_resolve, target)
     combo_path = _write_combo()
     findings: list[Finding] = []
     try:
-        # SSH / Telnet / FTP.
-        for port, svc in LOGIN_SERVICES.items():
-            if port in open_ports:
-                findings += await _hydra(ip, port, f"{svc}://{ip}:{port}", combo_path)
-        # HTTP Basic auth (http-get / https-get).
-        for port in HTTP_PORTS:
-            if port in open_ports:
-                findings += await _hydra(ip, port, f"http-get://{ip}:{port}/", combo_path)
-        for port in HTTPS_PORTS:
-            if port in open_ports:
-                findings += await _hydra(ip, port, f"https-get://{ip}:{port}/", combo_path)
+        for port, svc in services:
+            findings += await _hydra(ip, port, f"{svc}://{ip}:{port}", combo_path)
     finally:
         with _suppress():
             os.unlink(combo_path)

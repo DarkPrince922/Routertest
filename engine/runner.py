@@ -57,6 +57,9 @@ AlertCB = Callable[[ScanJob, Finding, str], Awaitable[None]]
 # Findings at or above this severity raise an immediate alert.
 ALERT_THRESHOLD = severity_rank(Severity.HIGH)
 
+# Hard backstop per stage — no single tool can hang a worker longer than this.
+STAGE_TIMEOUT = 600.0
+
 # Stages per profile (order matters).
 PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
     ScanProfile.QUICK: [("nmap", nmap_stage)],
@@ -81,16 +84,18 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
 
 
 class _QueueItem:
-    __slots__ = ("job", "on_progress", "on_stage_done", "on_done", "on_alert")
+    __slots__ = ("job", "on_progress", "on_stage_done", "on_done", "on_alert", "light")
 
     def __init__(self, job: ScanJob, on_progress: ProgressCB | None,
                  on_stage_done: StageDoneCB | None,
-                 on_done: DoneCB | None, on_alert: AlertCB | None) -> None:
+                 on_done: DoneCB | None, on_alert: AlertCB | None,
+                 light: bool = False) -> None:
         self.job = job
         self.on_progress = on_progress
         self.on_stage_done = on_stage_done
         self.on_done = on_done
         self.on_alert = on_alert
+        self.light = light  # batch/subnet scans skip the heaviest stages
 
 
 class Engine:
@@ -174,7 +179,8 @@ class Engine:
                 on_progress: ProgressCB | None = None,
                 on_stage_done: StageDoneCB | None = None,
                 on_done: DoneCB | None = None,
-                on_alert: AlertCB | None = None) -> ScanJob:
+                on_alert: AlertCB | None = None,
+                light: bool = False) -> ScanJob:
         """Scope-check, create the job and enqueue it (or reject).
 
         Returns the created :class:`ScanJob`. A rejected target is persisted with
@@ -205,7 +211,7 @@ class Engine:
                               resolved_ip=decision.resolved_ip, decision="QUEUED",
                               engagement_id=engagement_id)
         self._queue.put_nowait(
-            _QueueItem(job, on_progress, on_stage_done, on_done, on_alert))
+            _QueueItem(job, on_progress, on_stage_done, on_done, on_alert, light))
         return job
 
     # ------------------------------------------------------------ cancellation
@@ -268,7 +274,7 @@ class Engine:
         all_findings: list[Finding] = []
         device_label = ""
         final_status = JobStatus.DONE
-        ctx: dict = {}  # shared across this job's stages (vendor/model/ports…)
+        ctx: dict = {"light": item.light}  # shared across this job's stages
         try:
             for idx, (name, stage) in enumerate(stages, start=1):
                 if job.id in self._cancel_requested:
@@ -354,15 +360,23 @@ class Engine:
 
     async def _run_stage(self, name: str, stage: Stage, target: str,
                          job_id: int, ctx: dict) -> list[Finding]:
-        """Run one stage as a cancellable task.
+        """Run one stage as a cancellable, hard-time-bounded task.
 
         A failing stage yields an info Finding (never aborts the scan); a cancelled
-        stage re-raises ``CancelledError`` so the job is marked CANCELLED.
+        stage re-raises ``CancelledError`` so the job is marked CANCELLED. A
+        backstop timeout guarantees a stuck stage can never hang a worker forever
+        (kills its subprocess and moves on) — without it, one hung tool stalls the
+        whole queue at high concurrency.
         """
         task: asyncio.Task = asyncio.ensure_future(stage(target, ctx))
         self._running_stage[job_id] = task
         try:
-            return await task
+            return await asyncio.wait_for(task, timeout=STAGE_TIMEOUT)
+        except asyncio.TimeoutError:
+            log.warning("stage %s timed out (>%ss) on job %d — killed",
+                        name, STAGE_TIMEOUT, job_id)
+            return [Finding(name, Severity.INFO,
+                            f"stage {name} timed out (>{int(STAGE_TIMEOUT)}s)", {})]
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - one stage must not abort the scan

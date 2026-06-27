@@ -18,7 +18,7 @@ from ..models import Finding, Severity
 from ..runtime import get_config, heavy_semaphore
 from ._common import run_cmd
 
-MSF_TIMEOUT = 900.0          # msfconsole is slow to start; give it room
+MSF_TIMEOUT = 300.0          # msfconsole is slow to start, but bounded
 MAX_MSF_MODULES = 15
 _RESULT_RE = re.compile(r"MSFCHECK\|([^|]+)\|([^|]*)\|(.+)")
 
@@ -53,6 +53,11 @@ exit -y
 
 async def metasploit_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     cfg = get_config()
+    # msfconsole is far too heavy to run per host across a subnet — skip it in
+    # batch/subnet (light) scans; it still runs for single-host scans.
+    if (ctx or {}).get("light"):
+        return [Finding("metasploit", Severity.INFO,
+                        "metasploit: пропущен в пакетном/подсетевом скане (тяжёлый)", {})]
     if not cfg.metasploit_enabled:
         return [Finding("metasploit", Severity.INFO,
                         "metasploit: выключен (включите в ⚙️ Настройки)", {})]

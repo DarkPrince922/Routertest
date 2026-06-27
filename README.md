@@ -334,6 +334,11 @@ are tuned for a balance of speed and coverage on routers:
 - **Concurrency** — `MAX_CONCURRENT` in `.env` (default **6**) sets how many
   targets scan in parallel. This is the main lever for TXT batch lists. Raise it
   for more throughput (costs CPU/RAM/network); lower it on a small box.
+- **Batch/subnet scans run "light"** — the heaviest stage (Metasploit) is skipped
+  when scanning a list or subnet (msfconsole per host across a subnet is
+  impractical); it still runs for single-host scans. Every stage also has a hard
+  backstop timeout, so one stuck tool can never hang a worker — the queue keeps
+  moving even at high concurrency.
 - **`HEAVY_TOOL_LIMIT`** (default **2**) caps how many heavy tools
   (nuclei/routersploit) run at once, **independently of `MAX_CONCURRENT`**. nuclei
   with the full template set is memory-hungry, so without this a high
