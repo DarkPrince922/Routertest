@@ -6,6 +6,10 @@ pydantic>=2.6.0
 pydantic-settings>=2.2.0
 PyYAML>=6.0.1
 
+# Human-readable PDF reports (pure-Python, no system deps). Cyrillic is rendered
+# with the DejaVu TTF from fonts-dejavu-core (installed by install.sh).
+reportlab>=4.0.0
+
 # routersploit is installed via install.sh (pip install routersploit or vendored
 # clone) because it has heavy/legacy transitive deps that should not block the
 # core install. See install.sh §5 and README.

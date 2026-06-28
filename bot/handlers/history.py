@@ -1,12 +1,16 @@
-"""History list, single-job detail with findings pagination, and JSON export."""
+"""History list, single-job detail with findings pagination, JSON + PDF export."""
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery
 
 from engine.store import Store
+
+log = logging.getLogger(__name__)
 
 from .. import keyboards
 from ..callbacks import JobCB, MenuCB, PageCB
@@ -80,3 +84,31 @@ async def export_json(query: CallbackQuery, callback_data: JobCB, store: Store) 
         await query.message.answer_document(
             doc, caption=f"📄 Полный отчёт по job #{callback_data.job_id}")
     await query.answer()
+
+
+@router.callback_query(JobCB.filter(F.action == "pdf"))
+async def export_pdf(query: CallbackQuery, callback_data: JobCB, store: Store) -> None:
+    job = store.get_job(callback_data.job_id)
+    if job is None:
+        await query.answer("Job не найден.", show_alert=True)
+        return
+    await query.answer("📑 Готовлю PDF…")
+    findings = store.get_findings(callback_data.job_id)
+    try:
+        # reportlab is heavy/synchronous — build off the event loop.
+        from ..report_pdf import build_pdf
+        payload = await asyncio.to_thread(build_pdf, job, findings)
+    except ImportError:
+        await query.answer(
+            "PDF-движок не установлен. Обновите бота (update.sh переустановит "
+            "зависимости).", show_alert=True)
+        return
+    except Exception:  # noqa: BLE001
+        log.exception("PDF build failed for job %d", callback_data.job_id)
+        await query.answer("Не удалось сформировать PDF.", show_alert=True)
+        return
+    doc = BufferedInputFile(payload, filename=f"report_{callback_data.job_id}.pdf")
+    if query.message is not None:
+        await query.message.answer_document(
+            doc, caption=f"📑 Отчёт по скану #{callback_data.job_id} "
+                         f"· {job.target}")

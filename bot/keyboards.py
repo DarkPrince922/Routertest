@@ -120,10 +120,11 @@ def confirm() -> InlineKeyboardMarkup:
 def result_actions(job_id: int) -> InlineKeyboardMarkup:
     """Buttons shown under a finished scan summary."""
     kb = InlineKeyboardBuilder()
-    kb.button(text="📄 Полный отчёт (JSON)", callback_data=JobCB(action="json", job_id=job_id))
+    kb.button(text="📑 Отчёт PDF", callback_data=JobCB(action="pdf", job_id=job_id))
+    kb.button(text="📄 JSON", callback_data=JobCB(action="json", job_id=job_id))
     kb.button(text="🔁 Повторить", callback_data=JobCB(action="repeat", job_id=job_id))
     kb.button(text="🏠 Меню", callback_data=MenuCB(action="main"))
-    kb.adjust(1, 2)
+    kb.adjust(1, 2, 1)
     return kb.as_markup()
 
 
@@ -166,9 +167,10 @@ def job_detail(job_id: int, page: int, total_findings: int) -> InlineKeyboardMar
     if nav:
         kb.row(*nav)
     kb.row(
+        InlineKeyboardButton(text="📑 PDF", callback_data=JobCB(action="pdf", job_id=job_id).pack()),
         InlineKeyboardButton(text="📄 JSON", callback_data=JobCB(action="json", job_id=job_id).pack()),
-        InlineKeyboardButton(text="🏠 Меню", callback_data=MenuCB(action="main").pack()),
     )
+    kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data=MenuCB(action="main").pack()))
     return kb.as_markup()
 
 

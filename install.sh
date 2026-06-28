@@ -45,7 +45,7 @@ export DEBIAN_FRONTEND=noninteractive
 $SUDO apt-get update -y
 $SUDO apt-get install -y \
   python3 python3-venv python3-pip nmap git curl unzip ca-certificates build-essential \
-  snmp masscan hydra
+  snmp masscan hydra fonts-dejavu-core
 
 # --------------------------------------------------------------------------- 3. venv + python deps
 log "Creating virtualenv and installing Python dependencies"
