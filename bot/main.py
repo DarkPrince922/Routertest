@@ -68,6 +68,8 @@ async def main() -> None:
     discovery_method = store.get_setting("discovery_method", settings.discovery_method) or "auto"
     db_msf = store.get_setting("metasploit_enabled")
     metasploit_enabled = (db_msf == "true") if db_msf is not None else settings.metasploit_enabled
+    db_eco = store.get_setting("economy")
+    economy = (db_eco == "true") if db_eco is not None else settings.economy
     configure(EngineConfig(
         proxy=(db_proxy or None),
         rsf_default_only=rsf_default_only,
@@ -82,6 +84,7 @@ async def main() -> None:
         discovery_rate=settings.discovery_rate,
         hydra_pass_list=settings.hydra_pass_list,
         metasploit_enabled=metasploit_enabled,
+        economy=economy,
     ))
 
     bot = Bot(

@@ -216,8 +216,16 @@ sudo journalctl -u pentest-bot -f
 - **ℹ️ Статус** — queue depth, active scans, tool versions, interrupted count.
 - **⚙️ Настройки** — set/clear the SOCKS5/HTTP proxy, toggle the routersploit
   creds mode (default-only ↔ +bruteforce), toggle skip-unknown (strict ↔ lenient
-  device detection), cycle the **port scanner** (auto / masscan / nmap), and
-  **resume or clear** interrupted scans. All persisted in the DB.
+  device detection), cycle the **port scanner** (auto / masscan / nmap) and the
+  **liveness sweep** (auto / masscan / nmap), toggle **Metasploit** and the
+  **🐢 economy mode**, and **resume or clear** interrupted scans. All persisted in
+  the DB.
+  - **🐢 Эконом-режим** — for weak hardware. Serializes heavy tools (effective
+    heavy-tool limit = 1), drops nuclei concurrency to `-c 8`, throttles masscan
+    rates (port scan ~1000, sweep ~2000 pps), and scans batch **subnets strictly
+    one at a time** (each subnet's live hosts finish before the next sweep), so
+    the box never juggles a discovery sweep and a full scan queue at once. Much
+    lighter CPU, slower overall.
 
 ### Scan profiles
 

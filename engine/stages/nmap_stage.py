@@ -14,7 +14,7 @@ from xml.etree import ElementTree as ET
 from ..cve_db import match_fingerprint, record_cve
 from ..models import Finding, Severity
 from ..portscan import masscan_available, masscan_ports
-from ..runtime import get_config
+from ..runtime import effective_masscan_rate, get_config
 from ._banners import grab_banners
 from ._common import ToolNotFound, run_cmd
 
@@ -75,7 +75,8 @@ async def nmap_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     use_masscan = scanner in ("auto", "masscan") and masscan_available()
     if use_masscan:
         # Scan the same short router-port list as nmap (fast). No all-ports sweep.
-        mports, merr = await masscan_ports(target, ROUTER_PORTS, str(cfg.masscan_rate))
+        mports, merr = await masscan_ports(
+            target, ROUTER_PORTS, str(effective_masscan_rate()))
         if mports:
             open_ports = mports
             # Enrich with nmap -sV on just the open ports (best-effort).

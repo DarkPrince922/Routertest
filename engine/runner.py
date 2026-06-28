@@ -139,6 +139,26 @@ class Engine:
         """Ping-sweep a subnet, invoking ``on_host(ip)`` per live host as found."""
         return await discover_hosts_stream(cidr, on_host)
 
+    async def wait_jobs_done(self, job_ids: list[int], poll: float = 1.0) -> None:
+        """Block until every job in ``job_ids`` reaches a terminal state.
+
+        A job that was deleted (cancelled scans are removed from history) counts
+        as done. Used by economy mode to scan subnets strictly one at a time.
+        """
+        terminal = {JobStatus.DONE, JobStatus.ERROR, JobStatus.SKIPPED,
+                    JobStatus.REJECTED, JobStatus.CANCELLED}
+        pending = list(job_ids)
+        while pending:
+            still: list[int] = []
+            for jid in pending:
+                job = self._store.get_job(jid)
+                if job is not None and job.status not in terminal:
+                    still.append(jid)
+            if not still:
+                return
+            pending = still
+            await asyncio.sleep(poll)
+
     def mark_interrupted(self) -> int:
         """At startup: flag scans left unfinished by the previous run.
 

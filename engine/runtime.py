@@ -49,6 +49,10 @@ class EngineConfig:
     # Max heavy tools (nuclei/routersploit) running at once, regardless of
     # MAX_CONCURRENT. Bounds RAM/CPU so high concurrency doesn't OOM the box.
     heavy_tool_limit: int = 2
+    # Economy mode for weak hardware: serialize heavy tools (effective heavy
+    # limit = 1), throttle nuclei concurrency and masscan rates, and process
+    # batch subnets strictly one-at-a-time. Trades speed for a much lighter CPU.
+    economy: bool = False
     # SNMP community strings to test (default/weak).
     snmp_communities: tuple[str, ...] = ("public", "private", "admin")
 
@@ -66,17 +70,50 @@ def get_config() -> EngineConfig:
 
 
 _heavy_sem: asyncio.Semaphore | None = None
+_heavy_sem_size: int = 0
+
+
+def effective_heavy_limit() -> int:
+    """How many heavy tools may run at once — forced to 1 in economy mode."""
+    if _config.economy:
+        return 1
+    return max(1, _config.heavy_tool_limit)
 
 
 def heavy_semaphore() -> asyncio.Semaphore:
     """Process-wide limit on concurrent heavy tools (nuclei/routersploit).
 
-    Lazily created inside the running event loop; sized from ``heavy_tool_limit``.
+    Lazily created inside the running event loop; sized from the effective heavy
+    limit. Recreated when that size changes (e.g. economy mode toggled) so the new
+    limit takes effect on subsequent acquisitions.
     """
-    global _heavy_sem
-    if _heavy_sem is None:
-        _heavy_sem = asyncio.Semaphore(max(1, _config.heavy_tool_limit))
+    global _heavy_sem, _heavy_sem_size
+    size = effective_heavy_limit()
+    if _heavy_sem is None or _heavy_sem_size != size:
+        _heavy_sem = asyncio.Semaphore(size)
+        _heavy_sem_size = size
     return _heavy_sem
+
+
+def effective_nuclei_concurrency() -> int:
+    """nuclei ``-c`` value — capped low in economy mode to spare the CPU."""
+    if _config.economy:
+        return min(8, _config.nuclei_concurrency)
+    return _config.nuclei_concurrency
+
+
+def effective_masscan_rate() -> int:
+    """Per-host port-scan masscan rate — throttled in economy mode."""
+    if _config.economy:
+        return min(1000, _config.masscan_rate)
+    return _config.masscan_rate
+
+
+def effective_discovery_rate() -> int:
+    """Subnet-sweep masscan rate — throttled in economy mode."""
+    if _config.economy:
+        return min(2000, _config.discovery_rate)
+    return _config.discovery_rate
 
 
 _masscan_lock: asyncio.Lock | None = None
@@ -122,3 +159,9 @@ def set_discovery_method(value: str) -> None:
 
 def set_metasploit_enabled(enabled: bool) -> None:
     _config.metasploit_enabled = enabled
+
+
+def set_economy(enabled: bool) -> None:
+    """Toggle economy mode live. The heavy semaphore is resized lazily on the
+    next :func:`heavy_semaphore` call."""
+    _config.economy = enabled

@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from xml.etree import ElementTree as ET
 
 from .portscan import masscan_available
-from .runtime import get_config, masscan_lock
+from .runtime import effective_discovery_rate, get_config, masscan_lock
 from .stages._common import ToolNotFound, run_cmd
 
 log = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ async def discover_hosts_stream(cidr: str, on_host: HostCallback
 async def _stream_masscan(cidr: str, total: int, on_host: HostCallback
                           ) -> tuple[int, str | None]:
     """Fast TCP liveness sweep via masscan; dedups hosts as they stream in."""
-    rate = str(get_config().discovery_rate)
+    rate = str(effective_discovery_rate())
     argv = ["masscan", cidr, "-p", DISCOVERY_PORTS, "--rate", rate, "--wait", "2"]
     if shutil.which("stdbuf"):
         argv = ["stdbuf", "-oL", *argv]

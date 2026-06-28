@@ -8,7 +8,7 @@ import socket
 
 from ..cve_db import record_cve
 from ..models import Finding, normalize_severity
-from ..runtime import get_config, heavy_semaphore
+from ..runtime import effective_nuclei_concurrency, get_config, heavy_semaphore
 from ._common import ToolNotFound, run_cmd
 
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ async def nuclei_stage(target: str, ctx: dict | None = None) -> list[Finding]:
 
     cfg = get_config()
     cmd = ["nuclei", "-jsonl", "-silent", "-timeout", "5",
-           "-c", str(cfg.nuclei_concurrency)]
+           "-c", str(effective_nuclei_concurrency())]
     tags = cfg.nuclei_tags.strip()
     if tags:
         cmd += ["-tags", tags]

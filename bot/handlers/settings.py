@@ -43,6 +43,7 @@ def _view_text(store: Store) -> str:
         f"🛰 Сканер портов: {esc(cfg.port_scanner)}",
         f"🔎 Поиск живых: {esc(cfg.discovery_method)}",
         f"💥 Metasploit: {'вкл' if cfg.metasploit_enabled else 'выкл'}",
+        f"🐢 Эконом-режим: {'вкл (лёгкая нагрузка)' if cfg.economy else 'выкл'}",
     ]
     if interrupted:
         lines.append(f"♻️ Прерванных сканов: <b>{interrupted}</b>")
@@ -55,7 +56,8 @@ async def _show(query: CallbackQuery, store: Store) -> None:
                     keyboards.settings_menu(cfg.proxy, cfg.rsf_default_only,
                                             store.count_interrupted(),
                                             cfg.skip_unknown, cfg.port_scanner,
-                                            cfg.discovery_method, cfg.metasploit_enabled))
+                                            cfg.discovery_method, cfg.metasploit_enabled,
+                                            cfg.economy))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -97,7 +99,7 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
         keyboards.settings_menu(value, cfg.rsf_default_only,
                                 store.count_interrupted(), cfg.skip_unknown,
                                 cfg.port_scanner, cfg.discovery_method,
-                                cfg.metasploit_enabled))
+                                cfg.metasploit_enabled, cfg.economy))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -157,6 +159,17 @@ async def toggle_metasploit(query: CallbackQuery, store: Store) -> None:
     await _show(query, store)
     await query.answer("Metasploit включён (тяжёлый!)" if new_value
                        else "Metasploit выключен", show_alert=new_value)
+
+
+@router.callback_query(SettingsCB.filter(F.action == "economy_toggle"))
+async def toggle_economy(query: CallbackQuery, store: Store) -> None:
+    new_value = not runtime.get_config().economy
+    runtime.set_economy(new_value)
+    store.set_setting("economy", "true" if new_value else "false")
+    await _show(query, store)
+    await query.answer(
+        "🐢 Эконом-режим включён — нагрузка на CPU снижена" if new_value
+        else "Эконом-режим выключен", show_alert=new_value)
 
 
 # ---------------------------------------------------------- resume interrupted

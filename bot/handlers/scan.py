@@ -645,6 +645,9 @@ async def _launch_targets(message: Message, tokens: list[str], profile: ScanProf
         await add(host)
 
     # Then sweep each subnet, queuing live hosts as they stream in.
+    # Economy mode: scan each subnet's hosts to completion before sweeping the
+    # next, so the box never juggles a discovery sweep + a full scan queue.
+    economy = get_config().economy
     if cidrs:
         tracker.discovering = True
     for cidr in cidrs:
@@ -654,12 +657,22 @@ async def _launch_targets(message: Message, tokens: list[str], profile: ScanProf
         if not decision.allowed:
             rejected.append((cidr, decision.reason))
             continue
+        before = len(control.job_ids)
+        tracker.discovering = True
+        await tracker.touch()
         task = asyncio.ensure_future(engine.discover_hosts_stream(cidr, add))
         control.discovery_tasks.append(task)
         try:
             await task
         except asyncio.CancelledError:
             break
+        if economy and not control.stopped:
+            # Drain this subnet's freshly-queued hosts before the next sweep.
+            tracker.discovering = False
+            await tracker.touch()
+            new_ids = control.job_ids[before:]
+            if new_ids:
+                await engine.wait_jobs_done(new_ids)
     tracker.discovering = False
 
     if not control.job_ids:

@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     metasploit_enabled: bool = False
     # Max heavy tools (nuclei/routersploit) running at once (bounds RAM/CPU).
     heavy_tool_limit: int = 2
+    # Economy mode for weak hardware (throttles heavy tools, nuclei, masscan; runs
+    # batch subnets one at a time). Toggle live in ⚙️ Настройки.
+    economy: bool = False
 
     @field_validator("admin_ids", mode="before")
     @classmethod
