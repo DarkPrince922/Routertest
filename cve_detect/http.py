@@ -46,6 +46,7 @@ class Response:
     headers: dict
     text: str
     url: str
+    content: bytes = b""   # raw body bytes (needed for binary, e.g. favicon hash)
 
 
 class SafeHTTP:
@@ -133,11 +134,12 @@ class SafeHTTP:
             with opener.open(req, timeout=self._timeout) as resp:
                 body = b"" if method == "HEAD" else resp.read(_MAX_BODY)
                 return Response(resp.status, dict(resp.headers),
-                                body.decode("utf-8", errors="replace"), resp.geturl())
+                                body.decode("utf-8", errors="replace"),
+                                resp.geturl(), content=body)
         except urllib.error.HTTPError as exc:
             body = b"" if method == "HEAD" else exc.read(_MAX_BODY)
             return Response(exc.code, dict(exc.headers or {}),
-                            body.decode("utf-8", errors="replace"), url)
+                            body.decode("utf-8", errors="replace"), url, content=body)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

@@ -276,6 +276,14 @@ commands, or changes device state**. It reuses the nmap/snmp fingerprint (vendor
 model / firmware / open ports / banners), dispatches only the **applicable**
 detectors (no TP-Link checks against a D-Link), and emits `vulnerable` / `likely`
 / `not_vulnerable` / `unknown` with a confidence and a **remediation** string.
+Before dispatch it runs **independent model identification** (`cve_detect/
+fingerprint.py`): a Shodan-compatible **favicon hash** (pure-Python MurmurHash3,
+verified against the `mmh3` library) plus title / Server / body / path / port
+signatures (`cve_detect/data/model_signatures.yaml`). This pins a "quiet" device
+(generic login page, SNMP closed) to a concrete model — e.g. a DIR-620 that only
+mentions its model in the page body — so the right detector fires even when the
+device never cleanly advertised itself. Add known favicon hashes to the YAML to
+pin models with no text signal at all.
 Curated detectors cover TP-Link Archer AX21 (CVE-2023-1389), TP-Link WireGuard
 (CVE-2025-7850/7851), D-Link DIR-823X (CVE-2025-29635) & DIR-620 backdoor, Huawei
 HG532 TR-064 (CVE-2017-17215), GPON ONT (CVE-2018-10561/10562), the ASUS WRT

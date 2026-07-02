@@ -31,9 +31,13 @@ class FakeHTTP(SafeHTTP):
 
     async def _fetch(self, method: str, url: str, headers: dict) -> Response:
         self.calls.append((method, url))
-        for key, resp in self._responses.items():
-            if key in url:
-                return resp
+        # Prefer a suffix match ("/favicon.ico", "?images/"); else substring.
+        # Longest key wins so specific paths beat "/".
+        matches = [k for k in self._responses if url.endswith(k)]
+        if not matches:
+            matches = [k for k in self._responses if k in url]
+        if matches:
+            return self._responses[max(matches, key=len)]
         return Response(200, {}, "", url)
 
 

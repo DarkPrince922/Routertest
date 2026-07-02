@@ -1,0 +1,63 @@
+# Device-model signatures for independent identification.
+#
+# A signature matches when its rules hit the probed evidence:
+#   title / body / server : case-insensitive regex on <title>, page body, Server
+#   ports                 : gate — only considered if one of these ports is open
+#   favicon_mmh3          : list of Shodan-compatible favicon hashes (mmh3 over
+#                           base64.encodebytes(favicon)). Add known hashes here to
+#                           pin "quiet" devices that don't reveal their model in
+#                           text. Left empty by default (don't guess hashes).
+#
+# Scoring: favicon=3, title=2, body=2, server=1. Best score wins; the model is
+# accepted when the score is > 0 (confidence scales with the score).
+
+signatures:
+  - vendor: dlink
+    model: "DIR-620"
+    ports: [80, 8080]
+    title: "dir[-_ ]?620"
+    body: "dir[-_ ]?620"
+    server: "mathopd|lighttpd"
+    favicon_mmh3: []
+
+  - vendor: dlink
+    model: "DIR-823X"
+    ports: [80, 8080]
+    title: "dir[-_ ]?823x"
+    body: "dir[-_ ]?823x"
+    favicon_mmh3: []
+
+  - vendor: tplink
+    model: "Archer AX21"
+    ports: [80, 8080]
+    title: "archer[ _]?ax21|archer[ _]?ax1800|ax1800"
+    body: "archer[ _]?ax21|archer[ _]?ax1800"
+    server: "tp-link|tplink"
+    favicon_mmh3: []
+
+  - vendor: huawei
+    model: "HG532"
+    ports: [80, 37215, 52869]
+    title: "hg532|echolife"
+    body: "hg532|huawei home gateway|echolife"
+    favicon_mmh3: []
+
+  - vendor: gpon
+    model: "GPON ONT"
+    ports: [80, 443]
+    title: "gpon"
+    body: "gponform|gpon home gateway|gpon"
+    favicon_mmh3: []
+
+  - vendor: asus
+    model: "ASUS WRT"
+    ports: [80, 8443, 443]
+    title: "asus|rt-ac|rt-n|asuswrt"
+    body: "asuswrt|aicloud|asus router"
+    favicon_mmh3: []
+
+  - vendor: xiongmai
+    model: "XiongMai/TBK DVR"
+    ports: [80, 34567, 9527]
+    body: "netsurveillance|xiongmai|dvr web|hi3520"
+    favicon_mmh3: []

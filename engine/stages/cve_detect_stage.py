@@ -15,6 +15,7 @@ import logging
 
 from cve_detect import DeviceInfo, SafeHTTP, run_detectors
 from cve_detect.base import Status
+from cve_detect.fingerprint import enrich as enrich_model
 from cve_detect.nuclei_bridge import BRIDGED_CVES, run_nuclei
 
 from ..cve_db import record_cve
@@ -42,6 +43,25 @@ async def cve_detect_stage(target: str, ctx: dict | None = None) -> list[Finding
         audit=lambda rec: log.info("cve_detect http %s", rec),
     )
 
+    # Independently pin the model (favicon hash + title/Server/body/path/port
+    # signatures) so detectors fire even when the device is "quiet" (generic UI,
+    # SNMP closed). Also share it back so later stages/UI see the sharper model.
+    model_finding: list[Finding] = []
+    try:
+        match = await enrich_model(device, http)
+    except Exception:  # noqa: BLE001
+        match = None
+    if match is not None:
+        ctx["model"] = device.model
+        if not ctx.get("vendor"):
+            ctx["vendor"] = device.vendor
+        model_finding = [Finding("cve_detect", Severity.INFO,
+                                 f"🔎 Модель уточнена: {device.model} "
+                                 f"(conf {match.confidence:.2f}; {match.evidence})",
+                                 {"model": device.model, "vendor": device.vendor,
+                                  "confidence": round(match.confidence, 2),
+                                  "evidence": match.evidence})]
+
     cve_findings = await run_detectors(device, http, active=active)
 
     # Active confirmation via nuclei for the few CVEs with vetted templates.
@@ -54,7 +74,7 @@ async def cve_detect_stage(target: str, ctx: dict | None = None) -> list[Finding
             except Exception:  # noqa: BLE001
                 log.debug("nuclei bridge error for %s", cve, exc_info=True)
 
-    return _to_engine_findings(cve_findings, ctx)
+    return model_finding + _to_engine_findings(cve_findings, ctx)
 
 
 def _device_from_ctx(target: str, ctx: dict) -> DeviceInfo:
