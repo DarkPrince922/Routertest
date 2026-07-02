@@ -309,6 +309,9 @@ class Engine:
         # Defense-in-depth: let network-touching stages (cve_detect) re-check
         # scope per request without re-auditing every call.
         ctx["_scope_allows"] = self._scope.allows
+        # Self-learning favicon→model memory (cve_detect fingerprinting).
+        ctx["_favicon_lookup"] = self._store.get_favicon_model
+        ctx["_favicon_learn"] = self._store.learn_favicon_model
         try:
             for idx, (name, stage) in enumerate(stages, start=1):
                 if job.id in self._cancel_requested:

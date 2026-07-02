@@ -284,6 +284,13 @@ signatures (`cve_detect/data/model_signatures.yaml`). This pins a "quiet" device
 mentions its model in the page body — so the right detector fires even when the
 device never cleanly advertised itself. Add known favicon hashes to the YAML to
 pin models with no text signal at all.
+
+**It also learns favicon hashes by itself.** When a device is identified
+confidently from *text* (title/body), the bot records that device's favicon hash
+→ model in the DB (`favicon_models` table). The next device with the same favicon
+but a *stripped* UI (no model anywhere in the text) is then pinned from the
+learned hash alone — the model's own fingerprint DB grows automatically across
+scans, no manual YAML editing needed.
 Curated detectors cover TP-Link Archer AX21 (CVE-2023-1389), TP-Link WireGuard
 (CVE-2025-7850/7851), D-Link DIR-823X (CVE-2025-29635) & DIR-620 backdoor, Huawei
 HG532 TR-064 (CVE-2017-17215), GPON ONT (CVE-2018-10561/10562), the ASUS WRT

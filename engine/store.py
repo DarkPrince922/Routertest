@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Self-learned favicon-hash -> device model map (cve_detect fingerprinting).
+CREATE TABLE IF NOT EXISTS favicon_models (
+    hash       INTEGER PRIMARY KEY,
+    vendor     TEXT NOT NULL,
+    model      TEXT NOT NULL,
+    hits       INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -211,6 +220,26 @@ class Store:
                     "INSERT INTO settings(key, value) VALUES (?, ?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                     (key, value))
+            self._conn.commit()
+
+    # -------------------------------------------------- learned favicon models
+    def get_favicon_model(self, favicon_hash: int) -> tuple[str, str] | None:
+        """Return ``(vendor, model)`` learned for this favicon hash, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT vendor, model FROM favicon_models WHERE hash=?",
+                (int(favicon_hash),)).fetchone()
+        return (row["vendor"], row["model"]) if row is not None else None
+
+    def learn_favicon_model(self, favicon_hash: int, vendor: str, model: str) -> None:
+        """Record/refresh a favicon-hash → model association (upsert, hits++)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO favicon_models(hash, vendor, model, hits, updated_at) "
+                "VALUES (?, ?, ?, 1, ?) "
+                "ON CONFLICT(hash) DO UPDATE SET vendor=excluded.vendor, "
+                "model=excluded.model, hits=hits+1, updated_at=excluded.updated_at",
+                (int(favicon_hash), vendor, model, utcnow().isoformat()))
             self._conn.commit()
 
     def reset_job_for_retry(self, job_id: int) -> None:

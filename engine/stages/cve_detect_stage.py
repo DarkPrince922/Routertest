@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from cve_detect import DeviceInfo, SafeHTTP, run_detectors
+from cve_detect import CallableLearner, DeviceInfo, SafeHTTP, run_detectors
 from cve_detect.base import Status
 from cve_detect.fingerprint import enrich as enrich_model
 from cve_detect.nuclei_bridge import BRIDGED_CVES, run_nuclei
@@ -47,8 +47,11 @@ async def cve_detect_stage(target: str, ctx: dict | None = None) -> list[Finding
     # signatures) so detectors fire even when the device is "quiet" (generic UI,
     # SNMP closed). Also share it back so later stages/UI see the sharper model.
     model_finding: list[Finding] = []
+    lookup = ctx.get("_favicon_lookup")
+    learn = ctx.get("_favicon_learn")
+    learner = CallableLearner(lookup, learn) if lookup and learn else None
     try:
-        match = await enrich_model(device, http)
+        match = await enrich_model(device, http, learner=learner)
     except Exception:  # noqa: BLE001
         match = None
     if match is not None:

@@ -12,7 +12,14 @@ Public surface:
     build_markdown, build_json          — remediation report (report)
 """
 from .base import DeviceInfo, Detector, Finding, Status
-from .fingerprint import ModelMatch, enrich, favicon_hash, identify_model, murmur3_32
+from .fingerprint import (
+    CallableLearner,
+    ModelMatch,
+    enrich,
+    favicon_hash,
+    identify_model,
+    murmur3_32,
+)
 from .http import SafeHTTP, ScopeDenied
 from .registry import applicable_detectors, run_detectors
 from .report import build_json, build_markdown
@@ -23,4 +30,5 @@ __all__ = [
     "applicable_detectors", "run_detectors",
     "build_json", "build_markdown",
     "identify_model", "enrich", "favicon_hash", "murmur3_32", "ModelMatch",
+    "CallableLearner",
 ]
