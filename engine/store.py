@@ -242,6 +242,19 @@ class Store:
                 (int(favicon_hash), vendor, model, utcnow().isoformat()))
             self._conn.commit()
 
+    def count_favicon_models(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM favicon_models").fetchone()
+        return int(row["c"])
+
+    def clear_favicon_models(self) -> int:
+        """Wipe the learned favicon→model DB. Returns how many were removed."""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM favicon_models")
+            self._conn.commit()
+            return cur.rowcount
+
     def reset_job_for_retry(self, job_id: int) -> None:
         """Drop any partial findings and put the job back to QUEUED."""
         with self._lock:

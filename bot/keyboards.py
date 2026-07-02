@@ -36,7 +36,8 @@ def settings_menu(proxy: str | None, rsf_default_only: bool,
                   scanner: str = "auto", discovery: str = "auto",
                   metasploit: bool = False,
                   economy: bool = False,
-                  cve_active: bool = False) -> InlineKeyboardMarkup:
+                  cve_active: bool = False,
+                  favicon_learned: int = 0) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=("🔌 Прокси: задать" if not proxy else "🔌 Прокси: изменить"),
               callback_data=SettingsCB(action="proxy_set"))
@@ -59,6 +60,9 @@ def settings_menu(proxy: str | None, rsf_default_only: bool,
     kb.button(text=("🔬 CVE-проверки: активные" if cve_active
                     else "🔬 CVE-проверки: safe"),
               callback_data=SettingsCB(action="cve_toggle"))
+    if favicon_learned:
+        kb.button(text=f"🧠 Сбросить favicon-базу ({favicon_learned})",
+                  callback_data=SettingsCB(action="favicon_clear"))
     kb.button(text=("🐢 Эконом-режим: вкл" if economy else "🐢 Эконом-режим: выкл"),
               callback_data=SettingsCB(action="economy_toggle"))
     if interrupted:

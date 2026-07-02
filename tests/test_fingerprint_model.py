@@ -137,6 +137,19 @@ def test_bot_learns_favicon_from_text_match_then_pins_quiet_device():
     assert "изучен" in m2.evidence
 
 
+def test_store_favicon_count_and_clear():
+    from engine.store import Store
+    store = Store(":memory:")
+    assert store.count_favicon_models() == 0
+    store.learn_favicon_model(123, "dlink", "DIR-620")
+    store.learn_favicon_model(123, "dlink", "DIR-620")   # upsert, hits++
+    store.learn_favicon_model(456, "tplink", "Archer AX21")
+    assert store.count_favicon_models() == 2
+    assert store.get_favicon_model(123) == ("dlink", "DIR-620")
+    assert store.clear_favicon_models() == 2
+    assert store.count_favicon_models() == 0
+
+
 def test_no_learning_without_text_confidence():
     learner = DictLearner()
     dev = make_device(vendor="dlink", model="", open_ports=[80], raw_banners={})

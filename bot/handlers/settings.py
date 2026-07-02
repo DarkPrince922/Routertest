@@ -44,6 +44,7 @@ def _view_text(store: Store) -> str:
         f"🔎 Поиск живых: {esc(cfg.discovery_method)}",
         f"💥 Metasploit: {'вкл' if cfg.metasploit_enabled else 'выкл'}",
         f"🔬 cve_detect: {'активные проверки' if cfg.cve_active else 'safe (фингерпринт)'}",
+        f"🧠 Выучено favicon-моделей: {store.count_favicon_models()}",
         f"🐢 Эконом-режим: {'вкл (лёгкая нагрузка)' if cfg.economy else 'выкл'}",
     ]
     if interrupted:
@@ -58,7 +59,8 @@ async def _show(query: CallbackQuery, store: Store) -> None:
                                             store.count_interrupted(),
                                             cfg.skip_unknown, cfg.port_scanner,
                                             cfg.discovery_method, cfg.metasploit_enabled,
-                                            cfg.economy, cfg.cve_active))
+                                            cfg.economy, cfg.cve_active,
+                                            store.count_favicon_models()))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -100,7 +102,8 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
         keyboards.settings_menu(value, cfg.rsf_default_only,
                                 store.count_interrupted(), cfg.skip_unknown,
                                 cfg.port_scanner, cfg.discovery_method,
-                                cfg.metasploit_enabled, cfg.economy, cfg.cve_active))
+                                cfg.metasploit_enabled, cfg.economy, cfg.cve_active,
+                                store.count_favicon_models()))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -182,6 +185,15 @@ async def toggle_cve_active(query: CallbackQuery, store: Store) -> None:
     await query.answer(
         "🔬 Активные проверки CVE включены (неразрушающие)" if new_value
         else "cve_detect: только безопасный фингерпринт", show_alert=new_value)
+
+
+@router.callback_query(SettingsCB.filter(F.action == "favicon_clear"))
+async def clear_favicon_models(query: CallbackQuery, store: Store) -> None:
+    n = store.clear_favicon_models()
+    await _show(query, store)
+    await query.answer(
+        f"🧠 Сброшено выученных favicon-моделей: {n}" if n
+        else "База favicon пуста.", show_alert=bool(n))
 
 
 # ---------------------------------------------------------- resume interrupted
