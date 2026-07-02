@@ -6,6 +6,8 @@ firmware → likely, one finding per CVE. No payloads.
 """
 from __future__ import annotations
 
+import re
+
 from ..base import CONF_LIKELY, CONF_WEAK, DeviceInfo, Detector, Finding, Status
 
 CHAIN = [
@@ -17,8 +19,15 @@ CHAIN = [
     ("CVE-2023-41348", "ASUS WRT config injection (chain)", "high"),
     ("CVE-2024-12912", "ASUS WRT information disclosure", "medium"),
 ]
-# Illustrative EoL model tokens — refine against ASUS advisories.
-EOL_MODELS = {"rt-ac66u", "rt-ac68u", "rt-ac87u", "rt-n66u", "dsl-ac68u"}
+# Known end-of-life / discontinued ASUS models (no more firmware) — recommend
+# replacement. Refine against ASUS advisories; add models as you meet them.
+EOL_MODELS = {
+    "rt-ac51u", "rt-ac52u", "rt-ac53", "rt-ac66u", "rt-ac68u", "rt-ac87u",
+    "rt-ac1200", "rt-n10", "rt-n12", "rt-n14u", "rt-n56u", "rt-n66u",
+    "dsl-ac68u", "rt-ac1750",
+}
+# Pull the concrete ASUS model token out of the fingerprint for the evidence.
+_MODEL_RE = re.compile(r"\b(rt-?[an][cn]?\d[\w-]*|dsl-ac\d+)\b", re.IGNORECASE)
 
 
 class AsusWrtHug(Detector):
@@ -34,14 +43,19 @@ class AsusWrtHug(Detector):
         aicloud = await self._aicloud_present(device, http)
         blob = device.blob()
         eol = any(m in blob for m in EOL_MODELS)
+        mm = _MODEL_RE.search(blob)
+        model = mm.group(1).upper() if mm else None
 
         conf = CONF_LIKELY if (aicloud or eol) else CONF_WEAK
         status = Status.LIKELY if (aicloud or eol) else Status.UNKNOWN
-        ev_common = "ASUS WRT"
+        ev_common = f"ASUS WRT ({model})" if model else "ASUS WRT"
         if aicloud:
             ev_common += "; сервис AiCloud доступен (8443)"
+        else:
+            ev_common += "; AiCloud не обнаружен — CVE цепочки применимы при "
+            ev_common += "включённом AiCloud/уязвимой прошивке"
         if eol:
-            ev_common += "; модель в списке EoL"
+            ev_common += "; устройство EoL — рекомендуется замена"
 
         remediation = ("Обновить прошивку (для поддерживаемых моделей); отключить "
                        "AiCloud; EoL-модели — замена.")

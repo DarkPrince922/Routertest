@@ -366,15 +366,20 @@ def _classify(products: list[str], services: list[str], os_info: dict,
     verdict ∈ {"router", "not_router", "unknown"}.
     """
     blob = _blob(products, services, os_info, banners, hints)
-    # Prefer a concrete name from banners (model/title) over the nmap OS guess.
+    # Prefer a concrete name: banner title, nmap OS name, HTTP Server, or the
+    # nmap -sV product string (often the richest, e.g. "Asus RT-AC51U ...").
+    product_name = products[0] if products else ""
     best_name = (banners.get("http_title") or os_info.get("os_name")
-                 or banners.get("http_server") or os_info.get("vendor"))
+                 or banners.get("http_server") or product_name
+                 or os_info.get("vendor"))
 
-    # 1) Strong signal: known router vendor/product in banners or OS name.
+    # 1) Strong signal: a known router vendor (banners / -sV product / ports) OR a
+    #    router keyword — even when nmap -O produced no device type.
     matched_kw = next((kw for kw in ROUTER_KEYWORDS if kw in blob), None)
-    if matched_kw:
-        name = best_name or matched_kw
-        return "router", f"роутер ({name})", "высокая"
+    vendor = detect_vendor(blob)
+    if matched_kw or vendor:
+        name = best_name or matched_kw or vendor
+        return "router", f"роутер ({name})", ("высокая" if matched_kw else "средняя")
 
     # 2) nmap device type.
     dtype = os_info.get("device_type", "")

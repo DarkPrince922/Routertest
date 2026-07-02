@@ -168,6 +168,14 @@ async def identify_model(device: DeviceInfo, http, learner=None) -> ModelMatch |
         if m:
             title = " ".join(m.group(1).split())[:120]
 
+    # Fold in what nmap/snmp already learned (model/firmware/vendor) so signatures
+    # match even when the live page is quiet — the nmap -sV product often names
+    # the exact model (e.g. "Asus RT-AC51U ...") that GET / never reveals.
+    known = " ".join(t for t in (device.model, device.firmware, device.vendor) if t)
+    if known:
+        title = f"{title} {known}".strip()
+        body = f"{body} {known}".strip()
+
     best: ModelMatch | None = None
     best_text = False
 
@@ -255,9 +263,25 @@ async def enrich(device: DeviceInfo, http, learner=None) -> ModelMatch | None:
         return None
     if not device.vendor:
         device.vendor = match.vendor
-    # Only overwrite the model when we don't already have this model string.
-    if not device.model or match.model.lower() not in (device.model or "").lower():
+    # Only fill the model when it's empty/generic — never clobber a MORE specific
+    # model (e.g. keep "Asus RT-AC51U" instead of the generic "ASUS WRT", so the
+    # detectors' model/EoL checks still see the exact model). The signature label
+    # is always recorded separately (and lands in the blob for matching).
+    if _is_generic(device.model):
         device.model = match.model
     device.http_signatures["model_match"] = match.model
     device.http_signatures["model_match_conf"] = round(match.confidence, 2)
     return match
+
+
+_GENERIC_MODEL_RE = re.compile(
+    r"^\s*(роутер|router|login|устройство|device|\?|—|-)?[\s()?]*$", re.IGNORECASE)
+
+
+def _is_generic(model: str | None) -> bool:
+    """True when ``model`` carries no concrete model token worth preserving."""
+    if not model:
+        return True
+    # A bare "роутер (?)" / "Router" / "Login" has nothing specific to keep.
+    inner = re.sub(r"^\s*роутер\s*\((.*)\)\s*$", r"\1", model, flags=re.IGNORECASE)
+    return bool(_GENERIC_MODEL_RE.match(inner))
