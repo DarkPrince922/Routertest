@@ -44,6 +44,7 @@ def _view_text(store: Store) -> str:
         f"🔎 Поиск живых: {esc(cfg.discovery_method)}",
         f"💥 Metasploit: {'вкл' if cfg.metasploit_enabled else 'выкл'}",
         f"🔬 cve_detect: {'активные проверки' if cfg.cve_active else 'safe (фингерпринт)'}",
+        f"🛰 vulners (версия→CVE): {'вкл' if cfg.vulners_enabled else 'выкл'}",
         f"🧠 Выучено favicon-моделей: {store.count_favicon_models()}",
         f"🐢 Эконом-режим: {'вкл (лёгкая нагрузка)' if cfg.economy else 'выкл'}",
     ]
@@ -60,7 +61,8 @@ async def _show(query: CallbackQuery, store: Store) -> None:
                                             cfg.skip_unknown, cfg.port_scanner,
                                             cfg.discovery_method, cfg.metasploit_enabled,
                                             cfg.economy, cfg.cve_active,
-                                            store.count_favicon_models()))
+                                            store.count_favicon_models(),
+                                            cfg.vulners_enabled))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -103,7 +105,7 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
                                 store.count_interrupted(), cfg.skip_unknown,
                                 cfg.port_scanner, cfg.discovery_method,
                                 cfg.metasploit_enabled, cfg.economy, cfg.cve_active,
-                                store.count_favicon_models()))
+                                store.count_favicon_models(), cfg.vulners_enabled))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -185,6 +187,16 @@ async def toggle_cve_active(query: CallbackQuery, store: Store) -> None:
     await query.answer(
         "🔬 Активные проверки CVE включены (неразрушающие)" if new_value
         else "cve_detect: только безопасный фингерпринт", show_alert=new_value)
+
+
+@router.callback_query(SettingsCB.filter(F.action == "vulners_toggle"))
+async def toggle_vulners(query: CallbackQuery, store: Store) -> None:
+    new_value = not runtime.get_config().vulners_enabled
+    runtime.set_vulners_enabled(new_value)
+    store.set_setting("vulners_enabled", "true" if new_value else "false")
+    await _show(query, store)
+    await query.answer("🛰 vulners включён (нужен интернет)" if new_value
+                       else "vulners выключен")
 
 
 @router.callback_query(SettingsCB.filter(F.action == "favicon_clear"))

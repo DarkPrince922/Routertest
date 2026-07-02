@@ -47,6 +47,18 @@ $SUDO apt-get install -y \
   python3 python3-venv python3-pip nmap git curl unzip ca-certificates build-essential \
   snmp masscan hydra fonts-dejavu-core
 
+# Ensure the vulners NSE script (service version -> CVE) is available for the
+# vulners stage. It ships with most nmap builds; fetch it if this one lacks it.
+if [ ! -f /usr/share/nmap/scripts/vulners.nse ]; then
+  log "Fetching vulners NSE script (version->CVE lookup)"
+  if $SUDO curl -fsSL -o /usr/share/nmap/scripts/vulners.nse \
+       https://raw.githubusercontent.com/vulnersCom/nmap-vulners/master/vulners.nse; then
+    $SUDO nmap --script-updatedb >/dev/null 2>&1 || true
+  else
+    warn "Could not fetch vulners.nse — the vulners stage will no-op until it's added."
+  fi
+fi
+
 # --------------------------------------------------------------------------- 3. venv + python deps
 log "Creating virtualenv and installing Python dependencies"
 if [ ! -d "$APP_DIR/.venv" ]; then

@@ -72,6 +72,8 @@ async def main() -> None:
     economy = (db_eco == "true") if db_eco is not None else settings.economy
     db_cve = store.get_setting("cve_active")
     cve_active = (db_cve == "true") if db_cve is not None else settings.cve_active
+    db_vuln = store.get_setting("vulners_enabled")
+    vulners_enabled = (db_vuln == "true") if db_vuln is not None else settings.vulners_enabled
     configure(EngineConfig(
         proxy=(db_proxy or None),
         rsf_default_only=rsf_default_only,
@@ -88,6 +90,7 @@ async def main() -> None:
         metasploit_enabled=metasploit_enabled,
         economy=economy,
         cve_active=cve_active,
+        vulners_enabled=vulners_enabled,
     ))
 
     bot = Bot(

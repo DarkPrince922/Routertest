@@ -90,6 +90,7 @@ def summary(job: ScanJob, findings: list[Finding]) -> str:
 STAGE_START_LINE = {
     "nmap": "🔍 Сканирую порты и определяю устройство…",
     "cve_detect": "🔬 Проверяю известные CVE по модели/прошивке…",
+    "vulners": "🛰 Сверяю версии сервисов с базой CVE (vulners)…",
     "nuclei": "🧪 Проверяю известные уязвимости…",
     "routersploit": "🔑 Проверяю учётные данные по умолчанию…",
     "hydra": "🔓 Брутфорс логинов (hydra)…",
@@ -143,6 +144,13 @@ def stage_done_lines(stage_name: str, findings: list[Finding]) -> list[str]:
         if vuln:
             head += f" (подтверждено: {vuln})"
         return [head, f"   {cves}"]
+
+    if stage_name == "vulners":
+        cves = [f for f in findings if "cve" in f.detail]
+        if not cves:
+            return ["🛰 vulners: CVE по версиям не найдено"]
+        return [f"🛰 vulners: CVE по версиям сервисов: {len(cves)} "
+                f"(high/critical показаны в отчёте)"]
 
     if stage_name == "nuclei":
         matches = [f for f in findings if "template_id" in f.detail]

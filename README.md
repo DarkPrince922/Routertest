@@ -232,8 +232,8 @@ sudo journalctl -u pentest-bot -f
 | Profile | Stages |
 |---|---|
 | `QUICK` | nmap (ports + device fingerprint) |
-| `STANDARD` | nmap + snmp + cve_detect + nuclei + verify |
-| `FULL` | nmap + snmp + cve_detect + nuclei + routersploit + hydra + metasploit* + verify |
+| `STANDARD` | nmap + snmp + cve_detect + vulners + nuclei + verify |
+| `FULL` | nmap + snmp + cve_detect + vulners + nuclei + routersploit + hydra + metasploit* + verify |
 
 \* Metasploit is **off by default** (heavy) — enable in ⚙️ Настройки → 💥.
 
@@ -303,6 +303,16 @@ markers. Every request goes through a scope-gated, rate-limited, audited HTTP
 transport (`cve_detect/http.py`) that refuses out-of-scope hosts before any packet
 is sent. Confirmed hits feed the CVE-verification method set; findings carry their
 remediation into the PDF/JSON export.
+
+The **vulners** stage (`nmap -sV --script vulners`) maps the detected service
+versions to CVEs via the Vulners DB — broad, always-current version→CVE coverage
+that complements nuclei (which is check-based) and the dated routersploit. It
+scans just the already-open ports, emits high/critical CVEs individually (they
+alert and feed verify) and summarises the rest. It's **version inference** (like
+the fingerprint KB), not an active check, so hits are re-checked by verify.
+**Needs outbound internet** (the script queries vulners.com); toggle it in **⚙️
+Настройки → 🛰 vulners** and it's skipped in batch/subnet scans (too chatty for
+the API). If the `vulners` NSE script is missing, run `nmap --script-updatedb`.
 
 The **verify** stage (last in STANDARD/FULL) cross-checks every detected CVE to
 cut false positives. CVEs flagged only by passive fingerprint inference (the

@@ -467,6 +467,7 @@ _BATCH_RENDER_INTERVAL = 2.0
 _BATCH_DOING = {
     "nmap": "сканирую порты",
     "cve_detect": "сверяю CVE по модели",
+    "vulners": "сверяю версии с CVE",
     "nuclei": "проверяю уязвимости",
     "routersploit": "проверяю креды",
     "hydra": "брутфорс логинов",

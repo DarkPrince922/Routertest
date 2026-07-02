@@ -36,6 +36,7 @@ from .stages import (
     routersploit_stage,
     snmp_stage,
     verify_stage,
+    vulners_stage,
 )
 from .stages.nmap_stage import router_verdict
 from .store import Store
@@ -76,6 +77,7 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
         ("nmap", nmap_stage),
         ("snmp", snmp_stage),
         ("cve_detect", cve_detect_stage),
+        ("vulners", vulners_stage),
         ("nuclei", nuclei_stage),
         ("verify", verify_stage),
     ],
@@ -83,6 +85,7 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
         ("nmap", nmap_stage),
         ("snmp", snmp_stage),
         ("cve_detect", cve_detect_stage),
+        ("vulners", vulners_stage),
         ("nuclei", nuclei_stage),
         ("routersploit", routersploit_stage),
         ("hydra", hydra_stage),

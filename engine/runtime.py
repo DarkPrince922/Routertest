@@ -57,6 +57,9 @@ class EngineConfig:
     # (GPON auth-bypass compare, single known-cred try, nuclei confirmation).
     # Off = safe mode (fingerprint + endpoint presence only). Off by default.
     cve_active: bool = False
+    # vulners stage: nmap --script vulners (version→CVE via vulners.com). Needs
+    # outbound internet. On by default; turn off if the box has no connectivity.
+    vulners_enabled: bool = True
     # SNMP community strings to test (default/weak).
     snmp_communities: tuple[str, ...] = ("public", "private", "admin")
 
@@ -173,3 +176,7 @@ def set_economy(enabled: bool) -> None:
 
 def set_cve_active(enabled: bool) -> None:
     _config.cve_active = enabled
+
+
+def set_vulners_enabled(enabled: bool) -> None:
+    _config.vulners_enabled = enabled

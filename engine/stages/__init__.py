@@ -12,6 +12,8 @@ from .nuclei_stage import nuclei_stage
 from .routersploit_stage import routersploit_stage
 from .snmp_stage import snmp_stage
 from .verify_stage import verify_stage
+from .vulners_stage import vulners_stage
 
 __all__ = ["nmap_stage", "nuclei_stage", "routersploit_stage", "snmp_stage",
-           "hydra_stage", "metasploit_stage", "verify_stage", "cve_detect_stage"]
+           "hydra_stage", "metasploit_stage", "verify_stage", "cve_detect_stage",
+           "vulners_stage"]

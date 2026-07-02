@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     # cve_detect active mode: allow non-destructive ACTIVE probes (auth-bypass
     # compare, single known-cred try, nuclei confirm). Off = safe mode only.
     cve_active: bool = False
+    # vulners stage (nmap --script vulners, version→CVE). Needs internet.
+    vulners_enabled: bool = True
 
     @field_validator("admin_ids", mode="before")
     @classmethod
