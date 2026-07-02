@@ -28,6 +28,7 @@ from .discovery import discover_hosts, discover_hosts_stream
 from .runtime import get_config
 from .scope import ScopeGate
 from .stages import (
+    cve_detect_stage,
     hydra_stage,
     metasploit_stage,
     nmap_stage,
@@ -74,12 +75,14 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
     ScanProfile.STANDARD: [
         ("nmap", nmap_stage),
         ("snmp", snmp_stage),
+        ("cve_detect", cve_detect_stage),
         ("nuclei", nuclei_stage),
         ("verify", verify_stage),
     ],
     ScanProfile.FULL: [
         ("nmap", nmap_stage),
         ("snmp", snmp_stage),
+        ("cve_detect", cve_detect_stage),
         ("nuclei", nuclei_stage),
         ("routersploit", routersploit_stage),
         ("hydra", hydra_stage),
@@ -303,6 +306,9 @@ class Engine:
         device_label = ""
         final_status = JobStatus.DONE
         ctx: dict = {"light": item.light}  # shared across this job's stages
+        # Defense-in-depth: let network-touching stages (cve_detect) re-check
+        # scope per request without re-auditing every call.
+        ctx["_scope_allows"] = self._scope.allows
         try:
             for idx, (name, stage) in enumerate(stages, start=1):
                 if job.id in self._cancel_requested:

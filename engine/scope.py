@@ -98,6 +98,27 @@ class ScopeGate:
     def config(self) -> ScopeConfig:
         return self._config
 
+    def allows(self, target: str) -> bool:
+        """Lightweight in-scope check WITHOUT writing an audit row.
+
+        Used by per-request gates (e.g. the cve_detect SafeHTTP transport) that
+        fire many times per host and do their own logging — calling
+        :meth:`check` there would flood the audit table.
+        """
+        if self._config.allow_all:
+            return True
+        host_key = target.strip().lower()
+        if host_key in self._config.allowed_hosts:
+            return True
+        resolved = _resolve_ip(target)
+        if resolved is None:
+            return False
+        try:
+            ip_obj = ipaddress.ip_address(resolved)
+        except ValueError:
+            return False
+        return any(ip_obj in net for net in self._config.allowed_cidrs)
+
     def check(self, target: str, actor_id: int | None = None) -> ScopeDecision:
         """Resolve ``target`` and decide if it is in scope. Always audits."""
         target = target.strip()

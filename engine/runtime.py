@@ -53,6 +53,10 @@ class EngineConfig:
     # limit = 1), throttle nuclei concurrency and masscan rates, and process
     # batch subnets strictly one-at-a-time. Trades speed for a much lighter CPU.
     economy: bool = False
+    # cve_detect active mode: allow the module's non-destructive ACTIVE probes
+    # (GPON auth-bypass compare, single known-cred try, nuclei confirmation).
+    # Off = safe mode (fingerprint + endpoint presence only). Off by default.
+    cve_active: bool = False
     # SNMP community strings to test (default/weak).
     snmp_communities: tuple[str, ...] = ("public", "private", "admin")
 
@@ -165,3 +169,7 @@ def set_economy(enabled: bool) -> None:
     """Toggle economy mode live. The heavy semaphore is resized lazily on the
     next :func:`heavy_semaphore` call."""
     _config.economy = enabled
+
+
+def set_cve_active(enabled: bool) -> None:
+    _config.cve_active = enabled

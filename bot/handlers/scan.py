@@ -466,6 +466,7 @@ _BATCH_RENDER_INTERVAL = 2.0
 # Compact "doing now" labels for the batch aggregate view.
 _BATCH_DOING = {
     "nmap": "сканирую порты",
+    "cve_detect": "сверяю CVE по модели",
     "nuclei": "проверяю уязвимости",
     "routersploit": "проверяю креды",
     "hydra": "брутфорс логинов",

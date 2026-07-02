@@ -70,6 +70,8 @@ async def main() -> None:
     metasploit_enabled = (db_msf == "true") if db_msf is not None else settings.metasploit_enabled
     db_eco = store.get_setting("economy")
     economy = (db_eco == "true") if db_eco is not None else settings.economy
+    db_cve = store.get_setting("cve_active")
+    cve_active = (db_cve == "true") if db_cve is not None else settings.cve_active
     configure(EngineConfig(
         proxy=(db_proxy or None),
         rsf_default_only=rsf_default_only,
@@ -85,6 +87,7 @@ async def main() -> None:
         hydra_pass_list=settings.hydra_pass_list,
         metasploit_enabled=metasploit_enabled,
         economy=economy,
+        cve_active=cve_active,
     ))
 
     bot = Bot(

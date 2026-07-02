@@ -135,6 +135,7 @@ async def nmap_stage(target: str, ctx: dict | None = None) -> list[Finding]:
         ctx["model"] = fp.detail.get("label", "")
         ctx["open_ports"] = open_ports
         ctx["fingerprint_blob"] = blob
+        ctx["banners"] = banners  # http_server/http_title/ssh_banner/... for cve_detect
 
     if not findings:
         findings.append(Finding("nmap", Severity.INFO, "no open ports found", {}))

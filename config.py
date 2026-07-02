@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # Economy mode for weak hardware (throttles heavy tools, nuclei, masscan; runs
     # batch subnets one at a time). Toggle live in ⚙️ Настройки.
     economy: bool = False
+    # cve_detect active mode: allow non-destructive ACTIVE probes (auth-bypass
+    # compare, single known-cred try, nuclei confirm). Off = safe mode only.
+    cve_active: bool = False
 
     @field_validator("admin_ids", mode="before")
     @classmethod

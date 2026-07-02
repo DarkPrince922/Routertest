@@ -99,8 +99,12 @@ _DETAIL_LABELS = [
     ("community", "SNMP community"),
     ("sysDescr", "sysDescr"),
     ("matched_at", "Найдено по адресу"),
+    ("status", "Статус"),
+    ("confidence", "Уверенность"),
+    ("evidence", "Признак"),
+    ("remediation", "Устранение"),
     ("reference", "Ссылка"),
-    ("status", "Статус проверки"),
+    ("references", "Ссылки"),
     ("methods", "Методы"),
     ("reason", "Причина"),
 ]

@@ -43,6 +43,7 @@ def _view_text(store: Store) -> str:
         f"🛰 Сканер портов: {esc(cfg.port_scanner)}",
         f"🔎 Поиск живых: {esc(cfg.discovery_method)}",
         f"💥 Metasploit: {'вкл' if cfg.metasploit_enabled else 'выкл'}",
+        f"🔬 cve_detect: {'активные проверки' if cfg.cve_active else 'safe (фингерпринт)'}",
         f"🐢 Эконом-режим: {'вкл (лёгкая нагрузка)' if cfg.economy else 'выкл'}",
     ]
     if interrupted:
@@ -57,7 +58,7 @@ async def _show(query: CallbackQuery, store: Store) -> None:
                                             store.count_interrupted(),
                                             cfg.skip_unknown, cfg.port_scanner,
                                             cfg.discovery_method, cfg.metasploit_enabled,
-                                            cfg.economy))
+                                            cfg.economy, cfg.cve_active))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -99,7 +100,7 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
         keyboards.settings_menu(value, cfg.rsf_default_only,
                                 store.count_interrupted(), cfg.skip_unknown,
                                 cfg.port_scanner, cfg.discovery_method,
-                                cfg.metasploit_enabled, cfg.economy))
+                                cfg.metasploit_enabled, cfg.economy, cfg.cve_active))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -170,6 +171,17 @@ async def toggle_economy(query: CallbackQuery, store: Store) -> None:
     await query.answer(
         "🐢 Эконом-режим включён — нагрузка на CPU снижена" if new_value
         else "Эконом-режим выключен", show_alert=new_value)
+
+
+@router.callback_query(SettingsCB.filter(F.action == "cve_toggle"))
+async def toggle_cve_active(query: CallbackQuery, store: Store) -> None:
+    new_value = not runtime.get_config().cve_active
+    runtime.set_cve_active(new_value)
+    store.set_setting("cve_active", "true" if new_value else "false")
+    await _show(query, store)
+    await query.answer(
+        "🔬 Активные проверки CVE включены (неразрушающие)" if new_value
+        else "cve_detect: только безопасный фингерпринт", show_alert=new_value)
 
 
 # ---------------------------------------------------------- resume interrupted

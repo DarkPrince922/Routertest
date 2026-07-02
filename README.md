@@ -232,8 +232,8 @@ sudo journalctl -u pentest-bot -f
 | Profile | Stages |
 |---|---|
 | `QUICK` | nmap (ports + device fingerprint) |
-| `STANDARD` | nmap + snmp + nuclei + verify |
-| `FULL` | nmap + snmp + nuclei + routersploit + hydra + metasploit* + verify |
+| `STANDARD` | nmap + snmp + cve_detect + nuclei + verify |
+| `FULL` | nmap + snmp + cve_detect + nuclei + routersploit + hydra + metasploit* + verify |
 
 \* Metasploit is **off by default** (heavy) — enable in ⚙️ Настройки → 💥.
 
@@ -268,6 +268,26 @@ The optional **metasploit** stage (enable in ⚙️ Настройки → 💥;
 `msfconsole` installed separately, e.g. the Rapid7 nightly/omnibus) runs the
 detected vendor's Metasploit exploit modules' `check()` for far broader exploit
 coverage than routersploit — its hits feed CVE verification as an active method.
+
+The **cve_detect** stage (`cve_detect/` package, runs in STANDARD/FULL after the
+fingerprint) is a **detection-only** module: it *identifies* known router CVEs for
+remediation (patch / disable service / WAN-filter) and **never exploits, runs
+commands, or changes device state**. It reuses the nmap/snmp fingerprint (vendor /
+model / firmware / open ports / banners), dispatches only the **applicable**
+detectors (no TP-Link checks against a D-Link), and emits `vulnerable` / `likely`
+/ `not_vulnerable` / `unknown` with a confidence and a **remediation** string.
+Curated detectors cover TP-Link Archer AX21 (CVE-2023-1389), TP-Link WireGuard
+(CVE-2025-7850/7851), D-Link DIR-823X (CVE-2025-29635) & DIR-620 backdoor, Huawei
+HG532 TR-064 (CVE-2017-17215), GPON ONT (CVE-2018-10561/10562), the ASUS WRT
+"WrtHug" chain, and XiongMai/TBK DVRs (CVE-2024-3721). It is **safe by default**:
+only fingerprint + endpoint-presence probes run. **⚙️ Настройки → 🔬 CVE-проверки**
+switches to `active` mode, which additionally allows *non-destructive* active
+checks (the GPON `?images/` auth-bypass **comparison**, a **single** known-cred
+try, and nuclei confirmation via `nuclei_bridge`) — still no payloads or command
+markers. Every request goes through a scope-gated, rate-limited, audited HTTP
+transport (`cve_detect/http.py`) that refuses out-of-scope hosts before any packet
+is sent. Confirmed hits feed the CVE-verification method set; findings carry their
+remediation into the PDF/JSON export.
 
 The **verify** stage (last in STANDARD/FULL) cross-checks every detected CVE to
 cut false positives. CVEs flagged only by passive fingerprint inference (the
