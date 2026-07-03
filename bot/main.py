@@ -54,7 +54,11 @@ async def main() -> None:
     scope_config = ScopeConfig.load(settings.scope_path)
     store = Store(settings.db_path)
     scope_gate = ScopeGate(scope_config, store)
-    engine = Engine(store, scope_gate, max_concurrent=settings.max_concurrent)
+    db_mc = store.get_setting("max_concurrent")
+    max_concurrent = int(db_mc) if (db_mc and db_mc.isdigit()) else settings.max_concurrent
+    engine = Engine(store, scope_gate, max_concurrent=max_concurrent)
+    # Persist the effective value so the settings screen can display it.
+    store.set_setting("max_concurrent", str(engine.max_concurrent))
 
     # Engine runtime config (proxy, routersploit mode) for the stages.
     # In-bot settings (DB) take precedence over .env defaults so they persist

@@ -216,7 +216,8 @@ sudo journalctl -u pentest-bot -f
 - **ℹ️ Статус** — queue depth, active scans, tool versions, interrupted count.
 - **⚙️ Настройки** — set/clear the SOCKS5/HTTP proxy, toggle the routersploit
   creds mode (default-only ↔ +bruteforce), toggle skip-unknown (strict ↔ lenient
-  device detection), cycle the **port scanner** (auto / masscan / nmap) and the
+  device detection), **cycle the worker count (🧵 Потоки, live pool resize, no
+  restart)**, cycle the **port scanner** (auto / masscan / nmap) and the
   **liveness sweep** (auto / masscan / nmap), toggle **Metasploit** and the
   **🐢 economy mode**, and **resume or clear** interrupted scans. All persisted in
   the DB.

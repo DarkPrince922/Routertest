@@ -115,15 +115,22 @@ class _QueueItem:
         self.light = light  # batch/subnet scans skip the heaviest stages
 
 
+# Upper bound on live workers, whatever the setting asks for (safety).
+MAX_WORKERS = 16
+# Sentinel enqueued to retire one idle worker (used to shrink the pool live).
+_RETIRE = object()
+
+
 class Engine:
     """Owns the queue, the worker tasks and stage dispatch."""
 
     def __init__(self, store: Store, scope_gate: ScopeGate, max_concurrent: int = 2) -> None:
         self._store = store
         self._scope = scope_gate
-        self._max_concurrent = max(1, max_concurrent)
-        self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
+        self._desired = max(1, min(MAX_WORKERS, max_concurrent))
+        self._queue: asyncio.Queue = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
+        self._worker_seq = 0
         self._running_count = 0
         self._started = False
         # Cancellation bookkeeping.
@@ -136,9 +143,31 @@ class Engine:
         if self._started:
             return
         self._started = True
-        for i in range(self._max_concurrent):
-            self._workers.append(asyncio.create_task(self._worker(i), name=f"scan-worker-{i}"))
-        log.info("engine started with %d workers", self._max_concurrent)
+        self._spawn(self._desired)
+        log.info("engine started with %d workers", self._desired)
+
+    def _spawn(self, n: int) -> None:
+        """Create ``n`` new worker tasks (pruning finished ones first)."""
+        self._workers = [w for w in self._workers if not w.done()]
+        for _ in range(n):
+            wid = self._worker_seq
+            self._worker_seq += 1
+            self._workers.append(
+                asyncio.create_task(self._worker(wid), name=f"scan-worker-{wid}"))
+
+    def set_max_concurrent(self, n: int) -> int:
+        """Resize the worker pool live. Growing spawns workers immediately;
+        shrinking retires idle workers gracefully (running scans finish first).
+        Returns the applied value."""
+        n = max(1, min(MAX_WORKERS, n))
+        if self._started and n != self._desired:
+            if n > self._desired:
+                self._spawn(n - self._desired)
+            else:
+                for _ in range(self._desired - n):
+                    self._queue.put_nowait(_RETIRE)
+        self._desired = n
+        return n
 
     async def discover_hosts(self, cidr: str) -> tuple[list[str], int, str | None]:
         """Ping-sweep a subnet → (live_hosts, total_hosts, error)."""
@@ -275,12 +304,16 @@ class Engine:
 
     @property
     def max_concurrent(self) -> int:
-        return self._max_concurrent
+        return self._desired
 
     # ---------------------------------------------------------------- worker
     async def _worker(self, worker_id: int) -> None:
         while True:
             item = await self._queue.get()
+            if item is _RETIRE:  # pool shrink — this worker exits gracefully
+                self._queue.task_done()
+                log.info("worker %d retired (pool shrink)", worker_id)
+                return
             self._running_count += 1
             try:
                 await self._run_job(item)

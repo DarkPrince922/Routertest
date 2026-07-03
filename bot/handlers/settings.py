@@ -40,6 +40,7 @@ def _view_text(store: Store) -> str:
         f"🔌 Прокси: <code>{esc(proxy)}</code>",
         f"🔑 routersploit: {esc(rsf)}",
         f"🧭 Неизвестные устройства: {esc(unknown)}",
+        f"🧵 Потоков (хостов одновременно): {esc(store.get_setting('max_concurrent', '2'))}",
         f"🛰 Сканер портов: {esc(cfg.port_scanner)}",
         f"🔎 Поиск живых: {esc(cfg.discovery_method)}",
         f"💥 Metasploit: {'вкл' if cfg.metasploit_enabled else 'выкл'}",
@@ -62,7 +63,8 @@ async def _show(query: CallbackQuery, store: Store) -> None:
                                             cfg.discovery_method, cfg.metasploit_enabled,
                                             cfg.economy, cfg.cve_active,
                                             store.count_favicon_models(),
-                                            cfg.vulners_enabled))
+                                            cfg.vulners_enabled,
+                                            store.get_setting("max_concurrent", "2")))
 
 
 @router.callback_query(MenuCB.filter(F.action == "settings"))
@@ -105,7 +107,8 @@ async def receive_proxy(message: Message, state: FSMContext, store: Store) -> No
                                 store.count_interrupted(), cfg.skip_unknown,
                                 cfg.port_scanner, cfg.discovery_method,
                                 cfg.metasploit_enabled, cfg.economy, cfg.cve_active,
-                                store.count_favicon_models(), cfg.vulners_enabled))
+                                store.count_favicon_models(), cfg.vulners_enabled,
+                                store.get_setting("max_concurrent", "2")))
 
 
 @router.callback_query(SettingsCB.filter(F.action == "proxy_clear"))
@@ -187,6 +190,19 @@ async def toggle_cve_active(query: CallbackQuery, store: Store) -> None:
     await query.answer(
         "🔬 Активные проверки CVE включены (неразрушающие)" if new_value
         else "cve_detect: только безопасный фингерпринт", show_alert=new_value)
+
+
+_CONCURRENCY_CYCLE = [1, 2, 3, 4, 6, 8]
+
+
+@router.callback_query(SettingsCB.filter(F.action == "threads_cycle"))
+async def cycle_threads(query: CallbackQuery, store: Store, engine: Engine) -> None:
+    cur = engine.max_concurrent
+    nxt = next((v for v in _CONCURRENCY_CYCLE if v > cur), _CONCURRENCY_CYCLE[0])
+    applied = engine.set_max_concurrent(nxt)
+    store.set_setting("max_concurrent", str(applied))
+    await _show(query, store)
+    await query.answer(f"Потоков: {applied}")
 
 
 @router.callback_query(SettingsCB.filter(F.action == "vulners_toggle"))
