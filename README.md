@@ -234,6 +234,7 @@ sudo journalctl -u pentest-bot -f
 | `QUICK` | nmap (ports + device fingerprint) |
 | `STANDARD` | nmap + snmp + cve_detect + vulners + nuclei + verify |
 | `FULL` | nmap + snmp + cve_detect + vulners + nuclei + routersploit + hydra + metasploit* + verify |
+| `CVE` | cve_detect only — fast TZ-CVE search; self-probes ports + fingerprints, **no** nmap/snmp/vulners/nuclei |
 
 \* Metasploit is **off by default** (heavy) — enable in ⚙️ Настройки → 💥.
 

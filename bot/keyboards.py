@@ -17,6 +17,7 @@ PROFILE_LABELS: dict[ScanProfile, str] = {
     ScanProfile.QUICK: "⚡ Быстрый",
     ScanProfile.STANDARD: "🔍 Стандартный",
     ScanProfile.FULL: "💣 Полный",
+    ScanProfile.CVE: "🎯 Только CVE (быстро)",
 }
 
 
@@ -114,8 +115,10 @@ def profile_choice() -> InlineKeyboardMarkup:
               callback_data=ScanCB(step="profile", value=ScanProfile.STANDARD.value))
     kb.button(text=PROFILE_LABELS[ScanProfile.FULL],
               callback_data=ScanCB(step="profile", value=ScanProfile.FULL.value))
+    kb.button(text=PROFILE_LABELS[ScanProfile.CVE],
+              callback_data=ScanCB(step="profile", value=ScanProfile.CVE.value))
     kb.button(text="◀️ Назад", callback_data=ScanCB(step="target"))
-    kb.adjust(3, 1)
+    kb.adjust(3, 1, 1)
     return kb.as_markup()
 
 

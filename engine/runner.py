@@ -92,6 +92,9 @@ PROFILE_STAGES: dict[ScanProfile, list[tuple[str, Stage]]] = {
         ("metasploit", metasploit_stage),
         ("verify", verify_stage),
     ],
+    # Fast TZ-CVE search: just cve_detect (which self-probes ports + fingerprints
+    # internally), no nmap/snmp/vulners/nuclei. Ideal on already-live hosts.
+    ScanProfile.CVE: [("cve_detect", cve_detect_stage)],
     # FIRMWARE is reserved for v2 (binwalk/EMBA) and intentionally has no stages.
     ScanProfile.FIRMWARE: [],
 }

@@ -11,6 +11,7 @@ Safe by default: active/non-destructive probes run only when ``CVE_ACTIVE`` (⚙
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from cve_detect import CallableLearner, DeviceInfo, SafeHTTP, run_detectors
@@ -31,17 +32,49 @@ _STATUS_LABEL = {
     Status.UNKNOWN: "⚪ не определено",
 }
 
+# Ports the TZ detectors care about — probed directly in CVE-only mode (no nmap).
+CVE_PROBE_PORTS = [80, 81, 443, 8080, 8443, 8000, 8081, 8088, 8888, 4433, 7547,
+                   37215, 52869, 34567, 9527, 23]
+_PROBE_TIMEOUT = 1.0
+
+
+async def _probe_ports(target: str, ports: list[int]) -> list[int]:
+    """Fast concurrent TCP-connect probe → the subset of ``ports`` that are open."""
+    async def _one(port: int) -> int | None:
+        try:
+            fut = asyncio.open_connection(target, port)
+            _, writer = await asyncio.wait_for(fut, timeout=_PROBE_TIMEOUT)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:  # noqa: BLE001
+                pass
+            return port
+        except Exception:  # noqa: BLE001 - closed/filtered/timeout
+            return None
+
+    results = await asyncio.gather(*(_one(p) for p in ports))
+    return [p for p in results if p is not None]
+
 
 async def cve_detect_stage(target: str, ctx: dict | None = None) -> list[Finding]:
     ctx = ctx or {}
     device = _device_from_ctx(target, ctx)
     active = get_config().cve_active
+    scope_allows = ctx.get("_scope_allows", lambda _h: True)
     http = SafeHTTP(
-        ctx.get("_scope_allows", lambda _h: True),
+        scope_allows,
         safe=not active,
         proxy=get_config().proxy,
         audit=lambda rec: log.info("cve_detect http %s", rec),
     )
+
+    # CVE-only profile has no nmap stage, so ports aren't known yet — self-probe
+    # the characteristic router/IoT ports directly so detectors can still gate on
+    # them. (In STANDARD/FULL nmap already filled open_ports, so this is skipped.)
+    if not device.open_ports and scope_allows(target):
+        device.open_ports = await _probe_ports(target, CVE_PROBE_PORTS)
+        ctx["open_ports"] = device.open_ports
 
     # Independently pin the model (favicon hash + title/Server/body/path/port
     # signatures) so detectors fire even when the device is "quiet" (generic UI,

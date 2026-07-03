@@ -16,6 +16,7 @@ PROFILE_RU = {
     "QUICK": "Быстрый",
     "STANDARD": "Стандартный",
     "FULL": "Полный",
+    "CVE": "Только CVE",
     "FIRMWARE": "Firmware",
 }
 

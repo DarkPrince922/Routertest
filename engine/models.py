@@ -33,6 +33,7 @@ class ScanProfile(str, enum.Enum):
     QUICK = "QUICK"        # nmap only
     STANDARD = "STANDARD"  # nmap + nuclei
     FULL = "FULL"          # nmap + nuclei + routersploit
+    CVE = "CVE"            # cve_detect only — fast TZ-CVE search, no nmap/nuclei
     FIRMWARE = "FIRMWARE"  # reserved (binwalk/EMBA) — not implemented in v1
 
 
